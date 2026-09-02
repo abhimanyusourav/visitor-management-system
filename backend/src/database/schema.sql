@@ -317,3 +317,17 @@ CREATE TABLE IF NOT EXISTS system_settings (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Dynamic Column Migrations for Idempotent Schema Upgrades
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS entry_gate_id UUID REFERENCES gates(id) ON DELETE SET NULL;
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS exit_gate_id UUID REFERENCES gates(id) ON DELETE SET NULL;
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS emergency_muster_status VARCHAR(30) NOT NULL DEFAULT 'NOT_VERIFIED';
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS assembly_point VARCHAR(100);
+
+ALTER TABLE visitor_passes ADD COLUMN IF NOT EXISTS qr_token_hash VARCHAR(64);
+CREATE INDEX IF NOT EXISTS idx_passes_token_hash ON visitor_passes(qr_token_hash);
+
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64);
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_hash VARCHAR(64);
+CREATE INDEX IF NOT EXISTS idx_audit_event_hash ON audit_logs(event_hash);
+
