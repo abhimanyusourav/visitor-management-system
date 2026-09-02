@@ -15,7 +15,7 @@ router.get('/roles', async (req: Request, res: Response) => {
     const rolesRes = await query(`SELECT id, name, slug, description FROM roles ORDER BY id ASC`);
     res.json({ success: true, data: rolesRes.rows });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'ROLES_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'ROLES_FETCH_FAILED', message: 'Failed to retrieve roles.' } });
   }
 });
 
@@ -51,7 +51,7 @@ router.get('/', requirePermission('user:manage'), async (req: Request, res: Resp
 
     res.json({ success: true, data: usersWithSites });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'USERS_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'USERS_FETCH_FAILED', message: 'Failed to retrieve users.' } });
   }
 });
 
@@ -107,7 +107,7 @@ router.post('/', requirePermission('user:manage'), async (req: Request, res: Res
 
     res.status(201).json({ success: true, message: 'User created successfully', data: newUser });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'USER_CREATE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'USER_CREATE_FAILED', message: 'Failed to create user.' } });
   }
 });
 
@@ -160,7 +160,7 @@ router.put('/:id', requirePermission('user:manage'), async (req: Request, res: R
 
     res.json({ success: true, message: 'User updated successfully.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'USER_UPDATE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'USER_UPDATE_FAILED', message: 'Failed to update user.' } });
   }
 });
 
@@ -195,7 +195,7 @@ router.post('/:id/reset-password', requirePermission('user:manage'), async (req:
 
     res.json({ success: true, message: 'User password has been reset successfully.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'PASSWORD_RESET_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'PASSWORD_RESET_FAILED', message: 'Failed to reset password.' } });
   }
 });
 

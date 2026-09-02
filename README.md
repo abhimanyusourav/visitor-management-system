@@ -57,9 +57,9 @@ Password for all demo accounts: **`Password@123`**
 
 ---
 
-## 🧪 Automated Testing
+## 🧪 Automated Regression & Security Testing
 
-To run the automated integration test suite:
+To run the complete automated test suite (10 suites, 24 test cases):
 
 ```bash
 cd backend
@@ -70,6 +70,13 @@ npm test
 - `tests/auth.test.ts`: Login validation, password verification, brute-force protection, 401 unauthorized checks.
 - `tests/visits_workflow.test.ts`: Complete visit registration, QR token generation, public verification, live rollcall presence, gate checkout, token invalidation, and emergency evacuation export.
 - `tests/rbac_isolation.test.ts`: Multi-site data isolation (Site A cannot access Site B) and RBAC permission enforcement.
+- `tests/site_isolation.test.ts`: Strict rejection of header, query string, body, and URL site ID parameter spoofing with `HTTP 403 Forbidden`.
+- `tests/host_authorization.test.ts`: Host employee approval guardrails (Employee A cannot approve Employee B's visitor).
+- `tests/atomic_concurrency.test.ts`: Atomic check-in & check-out state transitions preventing double check-in and double check-out race conditions (HTTP 409 Conflict).
+- `tests/qr_security.test.ts`: Token-only verification rejection of `pass_number`/`visit_code`, zero-PII public response validation.
+- `tests/storage_security.test.ts`: Authenticated photo streaming, magic bytes image verification, path traversal prevention.
+- `tests/audit_hash_chain.test.ts`: Failed login security audit logs and SHA-256 cryptographic audit chain verification.
+- `tests/gates.test.ts`: Physical and logical checkpoint gate CRUD scoped to active plant site.
 
 ---
 
@@ -115,6 +122,8 @@ Visitor-Management-System/
 ## 📖 Complete Documentation Index
 
 For in-depth technical documentation, refer to the `docs/` folder:
+- [Security Remediation & Hardening Report](file:///d:/04_Projects_&_Code/Visitor-Management-System/docs/security-remediation-report.md)
+- [API Authorization Matrix & Scoping Rules](file:///d:/04_Projects_&_Code/Visitor-Management-System/docs/api-authorization-matrix.md)
 - [System Architecture](file:///d:/04_Projects_&_Code/Visitor-Management-System/docs/architecture.md)
 - [Database Schema & ER Diagrams](file:///d:/04_Projects_&_Code/Visitor-Management-System/docs/database.md)
 - [REST API Specification](file:///d:/04_Projects_&_Code/Visitor-Management-System/docs/api.md)

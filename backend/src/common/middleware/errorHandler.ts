@@ -10,17 +10,19 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
   });
 
   const statusCode = err.statusCode || err.status || 500;
-  const errorCode = err.code || 'INTERNAL_SERVER_ERROR';
-  const message = statusCode === 500 && process.env.NODE_ENV === 'production'
-    ? 'An unexpected error occurred. Please contact the system administrator.'
-    : err.message || 'Internal server error';
+  const errorCode = err.code || (statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR');
+  
+  // Never leak raw database/system error strings to the client
+  let clientMessage = err.message || 'An unexpected error occurred.';
+  if (statusCode === 500) {
+    clientMessage = 'An internal server error occurred. Please contact the plant administrator.';
+  }
 
   res.status(statusCode).json({
     success: false,
     error: {
       code: errorCode,
-      message: message,
-      details: err.details || null,
+      message: clientMessage,
     },
     timestamp: new Date().toISOString(),
   });

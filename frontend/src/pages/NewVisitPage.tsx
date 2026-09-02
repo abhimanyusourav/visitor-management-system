@@ -25,6 +25,7 @@ import { Employee, VisitorType } from '../types/index.js';
 import { WebcamModal } from '../components/camera/WebcamModal.js';
 import { VisitorPassModal } from '../components/pass/VisitorPassModal.js';
 import { resolveImageUrl } from '../utils/image.js';
+import { SearchableEmployeeSelect } from '../components/common/SearchableEmployeeSelect.js';
 
 export const NewVisitPage: React.FC = () => {
   const navigate = useNavigate();
@@ -47,7 +48,7 @@ export const NewVisitPage: React.FC = () => {
   const [idNumber, setIdNumber] = useState('');
   
   const [hostEmployeeId, setHostEmployeeId] = useState('');
-  const [purpose, setPurpose] = useState('Business Meeting');
+  const [purpose, setPurpose] = useState('');
   const [accompanyingCount, setAccompanyingCount] = useState(0);
   const [remarks, setRemarks] = useState('');
   const [vehicleType, setVehicleType] = useState('FOUR_WHEELER');
@@ -66,9 +67,6 @@ export const NewVisitPage: React.FC = () => {
       .then((res) => {
         if (res.data.success) {
           setEmployees(res.data.data);
-          if (res.data.data.length > 0) {
-            setHostEmployeeId(res.data.data[0].id);
-          }
         }
       })
       .catch((err) => console.error('Failed to load employees:', err));
@@ -120,6 +118,17 @@ export const NewVisitPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (!hostEmployeeId) {
+      setError('Please select a host employee.');
+      return;
+    }
+
+    if (!purpose.trim()) {
+      setError('Please enter the purpose of visit.');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -193,7 +202,37 @@ export const NewVisitPage: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Phone Number with Auto-Lookup */}
+            {/* 1. First Name */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                First Name *
+              </label>
+              <input
+                type="text"
+                required
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                placeholder="Rahul"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:bg-white transition-colors"
+              />
+            </div>
+
+            {/* 2. Last Name */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Last Name *
+              </label>
+              <input
+                type="text"
+                required
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="Kumar"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:bg-white transition-colors"
+              />
+            </div>
+
+            {/* 3. Phone Number with Auto-Lookup */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Mobile Number *
@@ -216,34 +255,7 @@ export const NewVisitPage: React.FC = () => {
               )}
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                First Name *
-              </label>
-              <input
-                type="text"
-                required
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                placeholder="Rahul"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:bg-white transition-colors"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Last Name *
-              </label>
-              <input
-                type="text"
-                required
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                placeholder="Kumar"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:bg-white transition-colors"
-              />
-            </div>
-
+            {/* 4. Company / Organization */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Company / Organization
@@ -257,6 +269,7 @@ export const NewVisitPage: React.FC = () => {
               />
             </div>
 
+            {/* 5. Email Address */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Email Address
@@ -270,6 +283,7 @@ export const NewVisitPage: React.FC = () => {
               />
             </div>
 
+            {/* 6. Visitor Category */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Visitor Category *
@@ -371,21 +385,14 @@ export const NewVisitPage: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Host Employee *
-              </label>
-              <select
-                required
+              <SearchableEmployeeSelect
+                employees={employees}
                 value={hostEmployeeId}
-                onChange={(e) => setHostEmployeeId(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:bg-white transition-colors"
-              >
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.first_name}{emp.last_name ? ` ${emp.last_name}` : ''} ({emp.department_name || emp.department_code})
-                  </option>
-                ))}
-              </select>
+                onChange={setHostEmployeeId}
+                required
+                label="Host Employee *"
+                placeholder="Type name, code or dept..."
+              />
             </div>
 
             <div>

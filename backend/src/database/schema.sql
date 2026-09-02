@@ -42,6 +42,22 @@ CREATE TABLE IF NOT EXISTS sites (
 );
 CREATE INDEX IF NOT EXISTS idx_sites_org_active ON sites(organization_id, is_active);
 
+-- 2.1 Logical Gates (Physical Site Entry/Exit Checkpoints)
+CREATE TABLE IF NOT EXISTS gates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    code VARCHAR(50) NOT NULL,
+    gate_type VARCHAR(50) NOT NULL DEFAULT 'MAIN',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    CONSTRAINT uq_site_gate_code UNIQUE (site_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_gates_site_active ON gates(site_id, is_active);
+
 -- 3. Roles
 CREATE TABLE IF NOT EXISTS roles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -194,6 +210,10 @@ CREATE TABLE IF NOT EXISTS visits (
     approved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     approved_at TIMESTAMPTZ,
     rejection_reason TEXT,
+    entry_gate_id UUID REFERENCES gates(id) ON DELETE SET NULL,
+    exit_gate_id UUID REFERENCES gates(id) ON DELETE SET NULL,
+    emergency_muster_status VARCHAR(30) NOT NULL DEFAULT 'NOT_VERIFIED',
+    assembly_point VARCHAR(100),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ
@@ -202,6 +222,7 @@ CREATE INDEX IF NOT EXISTS idx_visits_site_status ON visits(site_id, status);
 CREATE INDEX IF NOT EXISTS idx_visits_site_expected ON visits(site_id, expected_date);
 CREATE INDEX IF NOT EXISTS idx_visits_site_checkin ON visits(site_id, check_in_time);
 CREATE INDEX IF NOT EXISTS idx_visits_visitor ON visits(visitor_id);
+CREATE INDEX IF NOT EXISTS idx_visits_muster_status ON visits(site_id, emergency_muster_status);
 
 -- 13. Visit Vehicles
 CREATE TABLE IF NOT EXISTS visit_vehicles (
@@ -221,6 +242,7 @@ CREATE TABLE IF NOT EXISTS visitor_passes (
     visit_id UUID UNIQUE NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
     pass_number VARCHAR(50) UNIQUE NOT NULL,
     qr_token VARCHAR(128) UNIQUE NOT NULL,
+    qr_token_hash VARCHAR(64) UNIQUE,
     pass_type VARCHAR(50) NOT NULL DEFAULT 'STANDARD',
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
     issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -230,6 +252,7 @@ CREATE TABLE IF NOT EXISTS visitor_passes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_passes_token_status ON visitor_passes(qr_token, status);
+CREATE INDEX IF NOT EXISTS idx_passes_token_hash ON visitor_passes(qr_token_hash);
 
 -- 15. Visitor Documents
 CREATE TABLE IF NOT EXISTS visitor_documents (
@@ -275,9 +298,12 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     old_values JSONB,
     new_values JSONB,
     metadata JSONB,
+    previous_hash VARCHAR(64),
+    event_hash VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_org_site ON audit_logs(organization_id, site_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_event_hash ON audit_logs(event_hash);
 
 -- 18. System Settings
 CREATE TABLE IF NOT EXISTS system_settings (

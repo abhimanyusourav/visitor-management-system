@@ -3,14 +3,35 @@ import path from 'path';
 import crypto from 'crypto';
 import { Request, Response, Router } from 'express';
 import { config } from '../../config/env.js';
+import { authMiddleware } from '../../common/middleware/authMiddleware.js';
+import { query } from '../../database/db.js';
+
+function isValidImageMagicBytes(buffer: Buffer): boolean {
+  if (buffer.length < 4) return false;
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return true;
+  // PNG: 89 50 4E 47
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return true;
+  // WebP: RIFF .... WEBP
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+  ) {
+    return true;
+  }
+  // GIF: 47 49 46 38
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return true;
+  return false;
+}
 
 export class StorageService {
   private visitorsDir: string;
   private documentsDir: string;
 
   constructor() {
-    this.visitorsDir = path.join(config.storage.uploadDir, 'visitors');
-    this.documentsDir = path.join(config.storage.uploadDir, 'documents');
+    this.visitorsDir = path.resolve(config.storage.uploadDir, 'visitors');
+    this.documentsDir = path.resolve(config.storage.uploadDir, 'documents');
     this.ensureDirectories();
   }
 
@@ -25,9 +46,10 @@ export class StorageService {
 
   /**
    * Save a base64 image data URL (captured from webcam or mobile camera / file upload)
+   * Validates MIME type, file size, magic bytes, and generates a safe random filename.
    */
   public async saveBase64Photo(base64Data: string, prefix = 'photo'): Promise<string> {
-    if (!base64Data.startsWith('data:image')) {
+    if (!base64Data || typeof base64Data !== 'string' || !base64Data.startsWith('data:image')) {
       throw new Error('Invalid image format. Expected data:image/* data URL.');
     }
 
@@ -36,17 +58,30 @@ export class StorageService {
       throw new Error('Malformed base64 image data string.');
     }
 
-    let ext = matches[1].toLowerCase();
-    if (ext === 'jpeg') ext = 'jpg';
+    let rawExt = matches[1].toLowerCase();
+    if (rawExt === 'jpeg') rawExt = 'jpg';
+
+    const allowedExts = ['jpg', 'png', 'webp', 'gif'];
+    if (!allowedExts.includes(rawExt)) {
+      throw new Error('Unsupported image format. Allowed: JPG, PNG, WebP.');
+    }
+
     const buffer = Buffer.from(matches[2], 'base64');
 
-    // Max file size validation
+    // Max file size validation (default 5MB)
     const maxBytes = config.storage.maxFileSizeMb * 1024 * 1024;
     if (buffer.length > maxBytes) {
       throw new Error(`Image size exceeds limit of ${config.storage.maxFileSizeMb}MB.`);
     }
 
-    const filename = `${prefix}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}.${ext}`;
+    // Magic bytes content validation
+    if (!isValidImageMagicBytes(buffer)) {
+      throw new Error('Invalid image content. Magic byte verification failed.');
+    }
+
+    // Generate random collision-free filename
+    const safePrefix = prefix.replace(/[^a-zA-Z0-9_]/g, '');
+    const filename = `${safePrefix}_${Date.now()}_${crypto.randomBytes(8).toString('hex')}.${rawExt}`;
     const filePath = path.join(this.visitorsDir, filename);
 
     await fs.promises.writeFile(filePath, buffer);
@@ -55,7 +90,11 @@ export class StorageService {
 
   public getVisitorPhotoPath(filename: string): string {
     const sanitized = path.basename(filename);
-    return path.join(this.visitorsDir, sanitized);
+    const resolved = path.resolve(this.visitorsDir, sanitized);
+    if (!resolved.startsWith(this.visitorsDir)) {
+      throw new Error('Invalid file path traversal attempt.');
+    }
+    return resolved;
   }
 }
 
@@ -63,19 +102,37 @@ export const storageService = new StorageService();
 
 const router = Router();
 
-// Public photo streaming endpoint for badge rendering and verification
-router.get('/visitors/:filename', (req: Request, res: Response): void => {
-  const filename = String(req.params.filename);
-  const filePath = storageService.getVisitorPhotoPath(filename);
+// Private photo streaming endpoint: requires authentication, organization check, and private caching
+router.get('/visitors/:filename', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const filename = String(req.params.filename);
+    const filePath = storageService.getVisitorPhotoPath(filename);
 
-  if (!fs.existsSync(filePath)) {
-    res.status(404).json({ success: false, error: { code: 'FILE_NOT_FOUND', message: 'Photo not found' } });
-    return;
+    if (!fs.existsSync(filePath)) {
+      res.status(404).json({ success: false, error: { code: 'FILE_NOT_FOUND', message: 'Photo not found.' } });
+      return;
+    }
+
+    // Verify organization and site scoping for the visitor photo
+    const photoUrlFragment = `/api/storage/visitors/${path.basename(filename)}`;
+    const visitorRes = await query(`
+      SELECT organization_id FROM visitors WHERE photo_url = $1 AND deleted_at IS NULL
+    `, [photoUrlFragment]);
+
+    if (visitorRes.rows.length > 0) {
+      const visitorOrgId = visitorRes.rows[0].organization_id;
+      if (req.user!.role !== 'SUPER_ADMIN' && visitorOrgId !== req.user!.organizationId) {
+        res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED_PHOTO_ACCESS', message: 'Not authorized to access this visitor photo.' } });
+        return;
+      }
+    }
+
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+    res.sendFile(filePath);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: { code: 'PHOTO_STREAM_FAILED', message: 'Failed to retrieve visitor photo.' } });
   }
-
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  res.sendFile(filePath);
 });
 
 export const storageRouter = router;

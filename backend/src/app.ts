@@ -21,40 +21,64 @@ import { auditRouter } from './modules/audit/audit.controller.js';
 import { storageRouter } from './modules/storage/storage.service.js';
 import { notificationRouter } from './modules/notifications/notification.service.js';
 import { settingsRouter } from './modules/settings/settings.controller.js';
+import { gateRouter } from './modules/gates/gate.controller.js';
 
 export function createApp(): Express {
   const app = express();
 
-  // Security headers with relaxed cross-origin resource policy for camera uploads & badges
+  // Security headers with content security policy and frame protection
   app.use(helmet({
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'"],
+      },
+    },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   }));
 
-  // CORS configuration
+  // CORS configuration: strict allowlisting without permissive wildcards
   app.use(cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, server-to-server)
       if (!origin) return callback(null, true);
-      // In development or local network, allow localhost, 127.0.0.1, or private LAN IPs
-      if (
-        config.env === 'development' ||
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1') ||
-        /^http:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(origin) ||
-        origin === config.frontendUrl
-      ) {
+
+      if (config.corsAllowedOrigins.includes(origin) || origin === config.frontendUrl) {
         return callback(null, true);
       }
-      return callback(null, true); // Permissive for multi-device factory kiosk & mobile verification
+
+      if (config.env === 'development') {
+        if (
+          /^https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?$/.test(origin) ||
+          /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|169\.254\.\d+\.\d+)(:[0-9]+)?$/.test(origin)
+        ) {
+          return callback(null, true);
+        }
+      }
+
+      return callback(new Error(`CORS origin "${origin}" not allowed by security policy.`));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Site-Id'],
   }));
 
-  // Parsers (allowing base64 camera image payloads up to 10MB)
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  // Parsers: strict 100kb limit by default, up to 5MB specifically for image/camera payload endpoints
+  app.use((req, res, next) => {
+    if (
+      req.path.startsWith('/api/visits') ||
+      req.path.startsWith('/api/visitors') ||
+      req.path.startsWith('/api/storage')
+    ) {
+      express.json({ limit: '5mb' })(req, res, next);
+    } else {
+      express.json({ limit: '100kb' })(req, res, next);
+    }
+  });
+  app.use(express.urlencoded({ extended: true, limit: '100kb' }));
   app.use(cookieParser());
 
   // General API Rate Limiting
@@ -90,6 +114,7 @@ export function createApp(): Express {
   app.use('/api/auth', authRouter);
   app.use('/api/organizations', organizationRouter);
   app.use('/api/sites', siteRouter);
+  app.use('/api/gates', gateRouter);
   app.use('/api/users', userRouter);
   app.use('/api/departments', departmentRouter);
   app.use('/api/employees', employeeRouter);

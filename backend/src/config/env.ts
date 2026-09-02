@@ -10,6 +10,10 @@ export const config = {
   host: process.env.HOST || '0.0.0.0',
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   apiUrl: process.env.API_URL || 'http://localhost:5000',
+  corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean),
 
   database: {
     url: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/vms_factory_db',
@@ -23,7 +27,7 @@ export const config = {
 
   jwt: {
     secret: process.env.JWT_SECRET || 'super_secret_jwt_key_change_in_production_vms_2026',
-    expiresIn: process.env.JWT_EXPIRES_IN || '1d',
+    expiresIn: process.env.JWT_EXPIRES_IN || '2h',
     refreshSecret: process.env.REFRESH_TOKEN_SECRET || 'super_secret_refresh_key_vms_2026',
     refreshExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d',
     bcryptSaltRounds: parseInt(process.env.BCRYPT_SALT_ROUNDS || '12', 10),

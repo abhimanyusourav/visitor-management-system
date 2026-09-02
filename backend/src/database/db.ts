@@ -198,6 +198,10 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
           existingKey = id;
           break;
         }
+        if (tableName === 'gates' && record.site_id && record.code && row.site_id === record.site_id && row.code && row.code.toUpperCase() === record.code.toUpperCase() && !row.deleted_at) {
+          existingKey = id;
+          break;
+        }
         if (record.pass_number && row.pass_number && row.pass_number === record.pass_number) {
           existingKey = id;
           break;
@@ -275,20 +279,63 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
               matches = false;
             }
           }
+
+          // Check organization_id scoping in WHERE
+          const orgMatch = normalized.match(/(?:[a-zA-Z0-9_]+\.)?organization_id\s*=\s*\$([0-9]+)/i);
+          if (orgMatch && matches) {
+            const orgIdx = parseInt(orgMatch[1], 10) - 1;
+            if (record.organization_id && params[orgIdx] && record.organization_id !== params[orgIdx]) {
+              matches = false;
+            }
+          }
+
+          // Check site_id scoping in WHERE
+          const siteMatch = normalized.match(/(?:[a-zA-Z0-9_]+\.)?site_id\s*=\s*\$([0-9]+)/i);
+          if (siteMatch && matches) {
+            const siteIdx = parseInt(siteMatch[1], 10) - 1;
+            if (record.site_id && params[siteIdx] && record.site_id !== params[siteIdx]) {
+              matches = false;
+            }
+          }
+
+          // Check atomic status constraint: status IN ('REGISTERED', 'APPROVED', 'PRE_REGISTERED')
+          if (normalized.match(/status\s+IN\s*\(([^)]+)\)/i) && matches) {
+            const allowedStatuses = ['REGISTERED', 'APPROVED', 'PRE_REGISTERED'];
+            if (!allowedStatuses.includes(record.status)) {
+              matches = false;
+            }
+          }
+
+          // Check atomic status constraint: status = 'CHECKED_IN' in WHERE
+          if (normalized.match(/WHERE[\s\S]*status\s*=\s*'CHECKED_IN'/i) && matches) {
+            if (record.status !== 'CHECKED_IN') {
+              matches = false;
+            }
+          }
         }
 
         if (matches) {
           record.updated_at = new Date().toISOString();
-          if (normalized.includes("status = 'CHECKED_IN'")) record.status = 'CHECKED_IN';
-          if (normalized.includes("status = 'CHECKED_OUT'")) record.status = 'CHECKED_OUT';
-          if (normalized.includes("status = 'USED'")) record.status = 'USED';
-          if (normalized.includes("status = 'ACTIVE'")) record.status = 'ACTIVE';
-          if (normalized.includes("status = 'APPROVED'")) record.status = 'APPROVED';
-          if (normalized.includes("status = 'REJECTED'")) record.status = 'REJECTED';
-          if (normalized.includes("is_read = TRUE")) record.is_read = true;
-          if (normalized.includes("deleted_at = NOW()")) record.deleted_at = new Date().toISOString();
-          if (normalized.includes("is_active = FALSE")) record.is_active = false;
-          if (normalized.includes("is_blacklisted = $1") && params.length >= 1) {
+          const whereIdx = normalized.indexOf('WHERE');
+          const setClause = whereIdx !== -1 ? normalized.substring(0, whereIdx) : normalized;
+
+          if (setClause.includes("status = 'CHECKED_OUT'")) {
+            record.status = 'CHECKED_OUT';
+          } else if (setClause.includes("status = 'CHECKED_IN'")) {
+            record.status = 'CHECKED_IN';
+          } else if (setClause.includes("status = 'USED'")) {
+            record.status = 'USED';
+          } else if (setClause.includes("status = 'ACTIVE'")) {
+            record.status = 'ACTIVE';
+          } else if (setClause.includes("status = 'APPROVED'")) {
+            record.status = 'APPROVED';
+          } else if (setClause.includes("status = 'REJECTED'")) {
+            record.status = 'REJECTED';
+          }
+          if (setClause.includes("is_read = TRUE")) record.is_read = true;
+          if (setClause.includes("deleted_at = NOW()")) record.deleted_at = new Date().toISOString();
+          if (setClause.includes("is_active = FALSE")) record.is_active = false;
+          if (setClause.includes("is_blacklisted = $1") && params.length >= 1) {
             record.is_blacklisted = Boolean(params[0]);
           }
 
@@ -302,6 +349,9 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
           }
 
           if (tableName === 'employees') {
+            if (setClause.includes('user_id = $1') && params[0]) {
+              record.user_id = params[0];
+            }
             if (normalized.includes('first_name = COALESCE($1, first_name)')) {
               if (params[0] !== undefined && params[0] !== null) record.first_name = params[0];
               if (params[1] !== undefined) record.last_name = params[1];
@@ -314,7 +364,7 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
           }
 
           if (tableName === 'visits') {
-            if (normalized.includes("status = 'CHECKED_OUT'")) {
+            if (setClause.includes("status = 'CHECKED_OUT'")) {
               record.status = 'CHECKED_OUT';
               if (normalized.includes('check_out_time = $1') && params[0]) {
                 record.check_out_time = params[0];
@@ -324,8 +374,10 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
               if (normalized.includes('checked_out_by_user_id = $2') && params[1]) {
                 record.checked_out_by_user_id = params[1];
               }
-            }
-            if (normalized.includes("status = 'CHECKED_IN'")) {
+              if (normalized.includes('exit_gate_id = $3') && params[2]) {
+                record.exit_gate_id = params[2];
+              }
+            } else if (setClause.includes("status = 'CHECKED_IN'")) {
               record.status = 'CHECKED_IN';
               if (normalized.includes('check_in_time = $1') && params[0]) {
                 record.check_in_time = params[0];
@@ -334,6 +386,9 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
               }
               if (normalized.includes('checked_in_by_user_id = $2') && params[1]) {
                 record.checked_in_by_user_id = params[1];
+              }
+              if (normalized.includes('entry_gate_id = $3') && params[2]) {
+                record.entry_gate_id = params[2];
               }
             }
             if (normalized.includes("status = 'APPROVED'")) {
@@ -346,11 +401,18 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
               record.rejected_at = new Date().toISOString();
               if (params[0]) record.rejection_reason = params[0];
             }
+            if (normalized.includes('emergency_muster_status = $1') && params[0]) {
+              record.emergency_muster_status = params[0];
+            }
+            if (normalized.includes('assembly_point = $2') && params[1]) {
+              record.assembly_point = params[1];
+            }
           }
 
           if (tableName === 'visitor_passes') {
             if (normalized.includes("status = 'USED'")) record.status = 'USED';
             if (normalized.includes("status = 'ACTIVE'")) record.status = 'ACTIVE';
+            if (normalized.includes("printed_count = printed_count + 1")) record.printed_count = (record.printed_count || 0) + 1;
           }
 
           table.set(id, record);
@@ -456,6 +518,27 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
       return { rows: allSites as T[], rowCount: allSites.length };
     }
 
+    // Gates Query
+    if (normalized.toLowerCase().includes('from gates')) {
+      const gatesTable = memoryDb.get('gates') || new Map();
+      let allGates = Array.from(gatesTable.values()).filter((g: any) => !g.deleted_at);
+      if (params.length > 0) {
+        if (normalized.includes('WHERE id = $1') || normalized.includes('WHERE g.id = $1')) {
+          allGates = allGates.filter((g: any) => g.id === params[0]);
+        }
+        if (normalized.includes('site_id = $1')) {
+          allGates = allGates.filter((g: any) => g.site_id === params[0]);
+        } else if (normalized.includes('site_id = $2')) {
+          allGates = allGates.filter((g: any) => g.site_id === params[1]);
+        }
+        if (normalized.includes('UPPER(code) = $2') || normalized.includes('code = $2')) {
+          const targetCode = String(params[1]).toUpperCase();
+          allGates = allGates.filter((g: any) => g.code && g.code.toUpperCase() === targetCode);
+        }
+      }
+      return { rows: allGates as T[], rowCount: allGates.length };
+    }
+
     // Departments Query
     if (normalized.toLowerCase().includes('from departments')) {
       const deptsTable = memoryDb.get('departments') || new Map();
@@ -497,6 +580,9 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
         if (normalized.includes('WHERE id = $1') || normalized.includes('WHERE e.id = $1')) {
           results = results.filter((e: any) => e.id === params[0]);
         }
+        if (normalized.includes('user_id = $1') || normalized.includes('e.user_id = $1')) {
+          results = results.filter((e: any) => e.user_id === params[0]);
+        }
         if (normalized.includes('UPPER(employee_code) = $2') || normalized.includes('employee_code = $2')) {
           const targetCode = String(params[1]).toUpperCase();
           results = results.filter((e: any) => e.employee_code && e.employee_code.toUpperCase() === targetCode);
@@ -528,7 +614,16 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
     // Audit Logs Query
     if (normalized.toLowerCase().includes('from audit_logs')) {
       const auditsTable = memoryDb.get('audit_logs') || new Map();
-      const allAudits = Array.from(auditsTable.values()).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      let allAudits = Array.from(auditsTable.values());
+      const lowerNorm = normalized.toLowerCase();
+      if (lowerNorm.includes('created_at asc')) {
+        allAudits.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      } else {
+        allAudits.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      }
+      if (lowerNorm.includes('limit 1')) {
+        return { rows: allAudits.slice(0, 1) as T[], rowCount: Math.min(1, allAudits.length) };
+      }
       if (isCount) {
         return { rows: [{ total: String(allAudits.length) }] as any, rowCount: 1 };
       }
@@ -584,8 +679,21 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
       });
 
       if (params.length > 0) {
-        const tokenOrId = params[0];
-        results = results.filter((p: any) => p.qr_token === tokenOrId || p.visit_id === tokenOrId || p.id === tokenOrId || p.pass_number === tokenOrId);
+        if (normalized.includes('v.organization_id = $1') && params[0]) {
+          results = results.filter((p: any) => !p.organization_id || p.organization_id === params[0]);
+        }
+        const allowHumanReadable = normalized.includes('pass_number = $3') || normalized.includes('visit_code = $3');
+        results = results.filter((p: any) => {
+          return params.some((param: any) => {
+            if (p.qr_token === param || p.qr_token_hash === param || p.visit_id === param || p.id === param) {
+              return true;
+            }
+            if (allowHumanReadable && (p.pass_number === param || p.visit_code === param)) {
+              return true;
+            }
+            return false;
+          });
+        });
       }
 
       return { rows: results as T[], rowCount: results.length };

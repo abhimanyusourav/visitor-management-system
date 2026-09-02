@@ -6,8 +6,14 @@ export function siteContextMiddleware(req: Request, res: Response, next: NextFun
     return;
   }
 
-  // Client requests site context via X-Site-Id header
-  const requestedSiteId = (req.headers['x-site-id'] as string) || (req.query.site_id as string);
+  // Inspect any explicit site_id sent by client across headers, query, or body
+  const rawRequestedSiteId = 
+    (req.headers['x-site-id'] as string) || 
+    (req.query.site_id as string) || 
+    (req.query.siteId as string) ||
+    (req.body && (req.body.site_id || req.body.siteId));
+
+  const requestedSiteId = typeof rawRequestedSiteId === 'string' ? rawRequestedSiteId.trim() : undefined;
 
   if (requestedSiteId) {
     // Validate that the user is authorized for this site

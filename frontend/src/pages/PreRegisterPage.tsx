@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore.js';
 import api from '../services/api.js';
 import { Employee, VisitorType } from '../types/index.js';
 import { VisitorPassModal } from '../components/pass/VisitorPassModal.js';
+import { SearchableEmployeeSelect } from '../components/common/SearchableEmployeeSelect.js';
 
 export const PreRegisterPage: React.FC = () => {
   const navigate = useNavigate();
@@ -210,19 +211,14 @@ export const PreRegisterPage: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Host Employee *</label>
-              <select
-                required
+              <SearchableEmployeeSelect
+                employees={employees}
                 value={hostEmployeeId}
-                onChange={(e) => setHostEmployeeId(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:bg-white transition-colors"
-              >
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.first_name} {emp.last_name} ({emp.department_name || emp.department_code})
-                  </option>
-                ))}
-              </select>
+                onChange={setHostEmployeeId}
+                required
+                label="Host Employee *"
+                placeholder="Type name, code or dept..."
+              />
             </div>
 
             <div>

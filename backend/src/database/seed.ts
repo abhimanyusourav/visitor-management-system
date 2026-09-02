@@ -138,6 +138,50 @@ export async function runSeed() {
     }
   }
 
+  // 6. Logical Gates
+  const gateMainBgpId = '60000000-0000-0000-0000-000000000001';
+  const gateVendorBgpId = '60000000-0000-0000-0000-000000000002';
+  const gateMainBasiId = '60000000-0000-0000-0000-000000000003';
+
+  await query(`
+    INSERT INTO gates (id, organization_id, site_id, name, code, gate_type, is_active)
+    VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+    ON CONFLICT (site_id, code) DO NOTHING
+  `, [gateMainBgpId, orgId, siteBaghpatId, 'Main Security Gate', 'GATE-BGP-01', 'MAIN']);
+
+  await query(`
+    INSERT INTO gates (id, organization_id, site_id, name, code, gate_type, is_active)
+    VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+    ON CONFLICT (site_id, code) DO NOTHING
+  `, [gateVendorBgpId, orgId, siteBaghpatId, 'Vendor & Material Gate', 'GATE-BGP-02', 'VENDOR']);
+
+  await query(`
+    INSERT INTO gates (id, organization_id, site_id, name, code, gate_type, is_active)
+    VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+    ON CONFLICT (site_id, code) DO NOTHING
+  `, [gateMainBasiId, orgId, siteBasiId, 'Main Entry Gate', 'GATE-BASI-01', 'MAIN']);
+
+  // 7. Seed Default Department & Host Employee
+  const deptId = '70000000-0000-0000-0000-000000000001';
+  await query(`
+    INSERT INTO departments (id, organization_id, site_id, name, code, description)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (organization_id, code) DO NOTHING
+  `, [deptId, orgId, siteBaghpatId, 'Operations & Engineering', 'OPS-01', 'Plant Operations']);
+
+  const empId = '80000000-0000-0000-0000-000000000001';
+  await query(`
+    INSERT INTO employees (id, organization_id, user_id, department_id, employee_code, first_name, last_name, email, phone, designation, is_active)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)
+    ON CONFLICT (organization_id, employee_code) DO NOTHING
+  `, [empId, orgId, '50000000-0000-0000-0000-000000000006', deptId, 'EMP-HOST-001', 'Abhimanyu', 'Kumar', 'employee@vms.local', '+91-9876543215', 'Production Lead']);
+
+  await query(`
+    INSERT INTO employee_sites (employee_id, site_id)
+    VALUES ($1, $2)
+    ON CONFLICT DO NOTHING
+  `, [empId, siteBaghpatId]);
+
   console.log('✅ System initialized successfully with master configuration and persistent storage.');
 }
 

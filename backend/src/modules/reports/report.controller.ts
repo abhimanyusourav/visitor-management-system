@@ -66,7 +66,7 @@ router.get('/dashboard/stats', async (req: Request, res: Response): Promise<void
       }
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'DASHBOARD_STATS_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'DASHBOARD_STATS_FAILED', message: 'Failed to retrieve dashboard metrics.' } });
   }
 });
 
@@ -76,53 +76,53 @@ router.get('/dashboard/charts', async (req: Request, res: Response): Promise<voi
     const orgId = req.user!.organizationId;
     const siteId = req.siteId;
 
-    const conditions: string[] = ['v.organization_id = $1', 'v.deleted_at IS NULL'];
+    const conditions: string[] = ['organization_id = $1', 'deleted_at IS NULL'];
     const params: any[] = [orgId];
 
     if (siteId) {
       params.push(siteId);
-      conditions.push(`v.site_id = $${params.length}`);
+      conditions.push(`site_id = $${params.length}`);
     }
 
     const where = conditions.join(' AND ');
 
-    // 1. Visits by day (Past 7 days)
+    // 1. Last 7 days visitor trends
     const trendRes = await query(`
       SELECT expected_date::text as date, COUNT(*) as count
-      FROM visits v
+      FROM visits
       WHERE ${where} AND expected_date >= CURRENT_DATE - INTERVAL '6 days'
       GROUP BY expected_date
       ORDER BY expected_date ASC
     `, params);
 
-    // 2. Visits by Department
+    // 2. Breakdown by Department
     const deptRes = await query(`
       SELECT d.name as department, COUNT(v.id) as count
       FROM visits v
       JOIN departments d ON v.department_id = d.id
-      WHERE ${where}
+      WHERE v.${where.replace(/organization_id/g, 'v.organization_id').replace(/deleted_at/g, 'v.deleted_at').replace(/site_id/g, 'v.site_id')}
       GROUP BY d.name
       ORDER BY count DESC
-      LIMIT 8
+      LIMIT 6
     `, params);
 
-    // 3. Visitor Type Distribution
+    // 3. Breakdown by Visitor Type
     const typeRes = await query(`
-      SELECT visitor_type as type, COUNT(*) as count
-      FROM visits v
+      SELECT visitor_type, COUNT(*) as count
+      FROM visits
       WHERE ${where}
       GROUP BY visitor_type
       ORDER BY count DESC
     `, params);
 
-    // 4. Purpose Breakdown
+    // 4. Breakdown by Purpose
     const purposeRes = await query(`
       SELECT purpose, COUNT(*) as count
-      FROM visits v
+      FROM visits
       WHERE ${where}
       GROUP BY purpose
       ORDER BY count DESC
-      LIMIT 6
+      LIMIT 5
     `, params);
 
     res.json({
@@ -135,7 +135,7 @@ router.get('/dashboard/charts', async (req: Request, res: Response): Promise<voi
       }
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'DASHBOARD_CHARTS_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'DASHBOARD_CHARTS_FAILED', message: 'Failed to retrieve chart analytics.' } });
   }
 });
 
@@ -236,7 +236,7 @@ router.get('/visitor-log', requirePermission('report:view'), async (req: Request
       }
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'REPORT_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'REPORT_FETCH_FAILED', message: 'Failed to generate visitor log report.' } });
   }
 });
 
@@ -324,7 +324,7 @@ router.get('/export/csv', requirePermission('report:export'), async (req: Reques
     res.setHeader('Content-Disposition', `attachment; filename=vms_report_${Date.now()}.csv`);
     res.send(csv);
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'CSV_EXPORT_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'CSV_EXPORT_FAILED', message: 'Failed to export CSV report.' } });
   }
 });
 

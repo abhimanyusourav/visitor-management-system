@@ -43,7 +43,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     res.json({ success: true, data: empRes.rows });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'EMPLOYEES_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'EMPLOYEES_FETCH_FAILED', message: 'Failed to retrieve employees directory.' } });
   }
 });
 
@@ -162,7 +162,7 @@ router.post('/', requireRole(['SUPER_ADMIN']), async (req: Request, res: Respons
 
     res.status(201).json({ success: true, message: 'Employee added successfully', data: newEmp });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'EMPLOYEE_CREATE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'EMPLOYEE_CREATE_FAILED', message: 'Failed to add employee.' } });
   }
 });
 
@@ -230,9 +230,9 @@ router.put('/:id', requireRole(['SUPER_ADMIN']), async (req: Request, res: Respo
     await query(`
       UPDATE employees
       SET first_name = COALESCE($1, first_name),
-          last_name = $2,
-          email = $3,
-          phone = $4,
+          last_name = CASE WHEN $2::text IS NOT NULL THEN $2 ELSE last_name END,
+          email = CASE WHEN $3::text IS NOT NULL THEN $3 ELSE email END,
+          phone = CASE WHEN $4::text IS NOT NULL THEN $4 ELSE phone END,
           designation = COALESCE($5, designation),
           department_id = COALESCE($6, department_id),
           is_active = COALESCE($7, is_active),
@@ -264,7 +264,7 @@ router.put('/:id', requireRole(['SUPER_ADMIN']), async (req: Request, res: Respo
 
     res.json({ success: true, message: 'Employee updated successfully.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'EMPLOYEE_UPDATE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'EMPLOYEE_UPDATE_FAILED', message: 'Failed to update employee.' } });
   }
 });
 
@@ -305,9 +305,8 @@ router.delete('/:id', requireRole(['SUPER_ADMIN']), async (req: Request, res: Re
 
     res.json({ success: true, message: 'Employee deleted successfully.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'EMPLOYEE_DELETE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'EMPLOYEE_DELETE_FAILED', message: 'Failed to delete employee.' } });
   }
 });
 
 export const employeeRouter = router;
-

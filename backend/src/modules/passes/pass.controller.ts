@@ -1,4 +1,6 @@
 import { Request, Response, Router } from 'express';
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import QRCode from 'qrcode';
 import { query } from '../../database/db.js';
 import { authMiddleware } from '../../common/middleware/authMiddleware.js';
@@ -7,8 +9,8 @@ import { config } from '../../config/env.js';
 
 const router = Router();
 
-// Helper to clean incoming token
-function cleanVerifyToken(raw: string): string {
+// Helper to clean incoming token from full URLs or query params
+export function cleanVerifyToken(raw: string): string {
   if (!raw) return '';
   let token = raw.trim();
   if (token.includes('/v/')) {
@@ -18,27 +20,37 @@ function cleanVerifyToken(raw: string): string {
   return token.trim();
 }
 
-// GET /api/passes/verify/:token - Gate / Mobile QR Verification (Zero PII leakage)
+// Compute SHA-256 hash of raw QR token
+export function hashQrToken(token: string): string {
+  return crypto.createHash('sha256').update(token.trim()).digest('hex');
+}
+
+// GET /api/passes/verify/:token - Gate / Mobile QR Verification (Zero PII, SHA-256 Token Verification)
 router.get('/verify/:token', async (req: Request, res: Response): Promise<void> => {
   try {
     const rawToken = String(req.params.token);
     const token = cleanVerifyToken(rawToken);
 
-    if (!token) {
+    // Reject empty tokens or human-readable fallback attempts on public endpoint
+    if (!token || token.length < 16) {
       res.status(400).json({
         success: false,
-        error: { code: 'EMPTY_PASS_TOKEN', message: 'Pass token is required.' }
+        error: { code: 'INVALID_PASS_TOKEN', message: 'A valid secure QR pass token is required.' }
       });
       return;
     }
 
+    const tokenHash = hashQrToken(token);
+
+    // Look up ONLY by secure token hash (or raw token for legacy fallback)
+    // Never match pass_number or visit_code on this public route
     const passRes = await query(`
       SELECT 
-        vp.id as pass_id, vp.pass_number, vp.qr_token, vp.status as pass_status,
+        vp.id as pass_id, vp.pass_number, vp.status as pass_status,
         vp.issued_at, vp.valid_until,
         v.id as visit_id, v.visit_code, v.visitor_type, v.purpose, v.status as visit_status,
         v.expected_date, v.expected_time, v.check_in_time, v.check_out_time,
-        vt.full_name as visitor_name, vt.company_name, vt.photo_url as visitor_photo,
+        vt.full_name as visitor_name, vt.company_name,
         e.first_name as host_first_name, e.last_name as host_last_name,
         d.name as department_name,
         s.id as site_id, s.name as site_name, s.code as site_code,
@@ -50,8 +62,8 @@ router.get('/verify/:token', async (req: Request, res: Response): Promise<void> 
       LEFT JOIN departments d ON v.department_id = d.id
       LEFT JOIN sites s ON v.site_id = s.id
       LEFT JOIN organizations o ON v.organization_id = o.id
-      WHERE vp.qr_token = $1 OR vp.pass_number = $1 OR v.visit_code = $1
-    `, [token]);
+      WHERE (vp.qr_token_hash = $1 OR vp.qr_token = $2) AND v.deleted_at IS NULL
+    `, [tokenHash, token]);
 
     if (passRes.rows.length === 0) {
       res.status(404).json({
@@ -74,37 +86,143 @@ router.get('/verify/:token', async (req: Request, res: Response): Promise<void> 
       verificationStatus = 'REVOKED';
     }
 
+    // Check if staff member is authenticated to attach operational details (visitId, photo)
+    let isStaffAuthenticated = false;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.substring(7), config.jwt.secret) as any;
+        if (decoded && (!pass.organization_id || decoded.organizationId === pass.organization_id)) {
+          isStaffAuthenticated = true;
+        }
+      } catch {
+        // Proceed as public unauthenticated verification
+      }
+    }
+
+    // Public sanitized verification payload - Zero PII by default unless authenticated staff
     res.json({
       success: true,
       data: {
-        verificationStatus,
+        ...(isStaffAuthenticated ? { visitId: pass.visit_id, visitorPhoto: pass.visitor_photo } : {}),
         isValid: verificationStatus === 'VALID',
-        passNumber: pass.pass_number,
-        visitCode: pass.visit_code,
-        qrToken: pass.qr_token,
+        verificationStatus,
         visitorName: pass.visitor_name,
-        companyName: pass.company_name,
-        visitorPhoto: pass.visitor_photo,
+        companyName: pass.company_name || 'Individual',
         hostName: pass.host_first_name ? `${pass.host_first_name} ${pass.host_last_name || ''}`.trim() : 'Duty Host',
-        department: pass.department_name || 'General Operations',
+        department: pass.department_name || 'Operations',
         purpose: pass.purpose,
         visitorType: pass.visitor_type,
         visitStatus: pass.visit_status,
-        siteName: pass.site_name || 'Main Plant',
+        siteName: pass.site_name || 'Plant Facility',
         siteCode: pass.site_code || 'SITE',
         organizationName: pass.organization_name || 'VMS',
-        checkInTime: pass.check_in_time,
-        checkOutTime: pass.check_out_time,
-        visitId: pass.visit_id,
+        expectedDate: pass.expected_date,
+        expectedTime: pass.expected_time,
+        passNumber: pass.pass_number,
+        visitCode: pass.visit_code,
       }
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'VERIFY_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'VERIFY_FAILED', message: 'Failed to verify pass token.' } });
   }
 });
 
 // Authenticated pass management routes
 router.use(authMiddleware);
+
+// GET /api/passes/scan/:token - Staff gate scanning & lookup endpoint
+router.get('/scan/:token', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawToken = String(req.params.token);
+    const token = cleanVerifyToken(rawToken);
+    const orgId = req.user!.organizationId;
+
+    if (!token) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PASS_TOKEN', message: 'A valid QR pass token or code is required.' }
+      });
+      return;
+    }
+
+    const tokenHash = hashQrToken(token);
+
+    const passRes = await query(`
+      SELECT 
+        vp.id as pass_id, vp.pass_number, vp.status as pass_status,
+        vp.issued_at, vp.valid_until,
+        v.id as visit_id, v.site_id, v.visit_code, v.visitor_type, v.purpose, v.status as visit_status,
+        v.expected_date, v.expected_time, v.check_in_time, v.check_out_time,
+        vt.full_name as visitor_name, vt.company_name, vt.photo_url as visitor_photo,
+        e.first_name as host_first_name, e.last_name as host_last_name,
+        d.name as department_name,
+        s.id as site_id, s.name as site_name, s.code as site_code,
+        o.name as organization_name
+      FROM visitor_passes vp
+      JOIN visits v ON vp.visit_id = v.id
+      JOIN visitors vt ON v.visitor_id = vt.id
+      LEFT JOIN employees e ON v.host_employee_id = e.id
+      LEFT JOIN departments d ON v.department_id = d.id
+      LEFT JOIN sites s ON v.site_id = s.id
+      LEFT JOIN organizations o ON v.organization_id = o.id
+      WHERE v.organization_id = $1
+        AND (vp.qr_token_hash = $2 OR vp.qr_token = $3 OR vp.pass_number = $3 OR v.visit_code = $3)
+        AND v.deleted_at IS NULL
+    `, [orgId, tokenHash, token]);
+
+    if (passRes.rows.length === 0) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'PASS_NOT_FOUND', message: 'No pass found matching the scanned QR code or pass number.' }
+      });
+      return;
+    }
+
+    const pass = passRes.rows[0];
+    const isExpired = new Date(pass.valid_until) < new Date();
+    const isUsed = pass.pass_status === 'USED' || pass.visit_status === 'CHECKED_OUT';
+
+    let verificationStatus: 'VALID' | 'ALREADY_CHECKED_OUT' | 'EXPIRED' | 'REVOKED' = 'VALID';
+    if (isUsed) {
+      verificationStatus = 'ALREADY_CHECKED_OUT';
+    } else if (isExpired) {
+      verificationStatus = 'EXPIRED';
+    } else if (pass.pass_status === 'REVOKED') {
+      verificationStatus = 'REVOKED';
+    }
+
+    res.json({
+      success: true,
+      data: {
+        visitId: pass.visit_id,
+        passId: pass.pass_id,
+        isValid: verificationStatus === 'VALID',
+        verificationStatus,
+        visitorName: pass.visitor_name,
+        companyName: pass.company_name || 'Individual',
+        visitorPhoto: pass.visitor_photo,
+        hostName: pass.host_first_name ? `${pass.host_first_name} ${pass.host_last_name || ''}`.trim() : 'Duty Host',
+        department: pass.department_name || 'Operations',
+        purpose: pass.purpose,
+        visitorType: pass.visitor_type,
+        visitStatus: pass.visit_status,
+        siteId: pass.site_id,
+        siteName: pass.site_name || 'Plant Facility',
+        siteCode: pass.site_code || 'SITE',
+        organizationName: pass.organization_name || 'VMS',
+        expectedDate: pass.expected_date,
+        expectedTime: pass.expected_time,
+        checkInTime: pass.check_in_time,
+        checkOutTime: pass.check_out_time,
+        passNumber: pass.pass_number,
+        visitCode: pass.visit_code,
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: { code: 'SCAN_FAILED', message: 'Failed to process pass scan.' } });
+  }
+});
 
 // GET /api/passes/:visitId - Get pass info and generated QR image Data URL
 router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
@@ -115,7 +233,7 @@ router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
     const passRes = await query(`
       SELECT 
         vp.*,
-        v.visit_code, v.visitor_type, v.purpose, v.status as visit_status,
+        v.site_id, v.visit_code, v.visitor_type, v.purpose, v.status as visit_status,
         v.expected_date, v.expected_time, v.check_in_time, v.accompanying_count,
         vt.full_name as visitor_name, vt.company_name, vt.photo_url as visitor_photo,
         vt.id_type, vt.id_number_masked,
@@ -131,7 +249,7 @@ router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
       JOIN departments d ON v.department_id = d.id
       JOIN sites s ON v.site_id = s.id
       JOIN organizations o ON v.organization_id = o.id
-      WHERE vp.visit_id = $1 AND v.organization_id = $2
+      WHERE vp.visit_id = $1 AND v.organization_id = $2 AND v.deleted_at IS NULL
     `, [visitId, orgId]);
 
     if (passRes.rows.length === 0) {
@@ -140,6 +258,12 @@ router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
     }
 
     const passData = passRes.rows[0];
+
+    // Enforce site authorization
+    if (req.user!.role !== 'SUPER_ADMIN' && !req.user!.allowedSiteIds.includes(passData.site_id)) {
+      res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED_SITE_ACCESS', message: 'You are not authorized to view passes for this site.' } });
+      return;
+    }
 
     // Generate high-quality QR code data URL
     const qrUrl = `${config.qr.verifyBaseUrl}/${passData.qr_token}`;
@@ -162,14 +286,34 @@ router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
       }
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'PASS_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'PASS_FETCH_FAILED', message: 'Failed to retrieve pass details.' } });
   }
 });
 
-// POST /api/passes/:id/reprint - Increment print count & record audit
+// POST /api/passes/:id/reprint - Increment print count & record audit with site scoping
 router.post('/:id/reprint', async (req: Request, res: Response): Promise<void> => {
   try {
     const passId = String(req.params.id);
+    const orgId = req.user!.organizationId;
+
+    // Verify pass belongs to user's organization and site
+    const passRes = await query(`
+      SELECT vp.id, v.site_id
+      FROM visitor_passes vp
+      JOIN visits v ON vp.visit_id = v.id
+      WHERE vp.id = $1 AND v.organization_id = $2 AND v.deleted_at IS NULL
+    `, [passId, orgId]);
+
+    if (passRes.rows.length === 0) {
+      res.status(404).json({ success: false, error: { code: 'PASS_NOT_FOUND', message: 'Pass not found.' } });
+      return;
+    }
+
+    const pass = passRes.rows[0];
+    if (req.user!.role !== 'SUPER_ADMIN' && !req.user!.allowedSiteIds.includes(pass.site_id)) {
+      res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED_SITE_ACCESS', message: 'Not authorized for this site pass.' } });
+      return;
+    }
 
     await query(`
       UPDATE visitor_passes
@@ -179,8 +323,8 @@ router.post('/:id/reprint', async (req: Request, res: Response): Promise<void> =
 
     await logAudit({
       userId: req.user!.userId,
-      organizationId: req.user!.organizationId,
-      siteId: req.siteId,
+      organizationId: orgId,
+      siteId: pass.site_id,
       action: 'VISITOR_PASS_PRINTED',
       entityType: 'VisitorPass',
       entityId: passId,
@@ -189,7 +333,7 @@ router.post('/:id/reprint', async (req: Request, res: Response): Promise<void> =
 
     res.json({ success: true, message: 'Pass print recorded.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'REPRINT_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'REPRINT_FAILED', message: 'Failed to record pass print.' } });
   }
 });
 

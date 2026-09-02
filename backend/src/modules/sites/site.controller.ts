@@ -82,8 +82,8 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
     }
 
     const siteRes = await query(`
-      SELECT * FROM sites WHERE id = $1 AND deleted_at IS NULL
-    `, [siteId]);
+      SELECT * FROM sites WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+    `, [siteId, req.user!.organizationId]);
 
     if (siteRes.rows.length === 0) {
       res.status(404).json({ success: false, error: { code: 'SITE_NOT_FOUND', message: 'Site not found.' } });
@@ -92,7 +92,7 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
 
     res.json({ success: true, data: siteRes.rows[0] });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'SITE_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'SITE_FETCH_FAILED', message: 'Failed to retrieve site details.' } });
   }
 });
 

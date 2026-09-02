@@ -36,6 +36,13 @@ router.post('/login', authRateLimiter, async (req: Request, res: Response): Prom
     `, [email.trim()]);
 
     if (userRes.rows.length === 0) {
+      await logAudit({
+        action: 'LOGIN_FAILED',
+        entityType: 'User',
+        entityId: 'UNKNOWN',
+        req,
+        metadata: { attemptedEmail: email.trim(), reason: 'USER_NOT_FOUND' }
+      });
       res.status(401).json({
         success: false,
         error: { code: 'AUTH_FAILED', message: 'Invalid email or password.' }
@@ -80,6 +87,16 @@ router.post('/login', authRateLimiter, async (req: Request, res: Response): Prom
         SET failed_login_attempts = $1, locked_until = $2
         WHERE id = $3
       `, [newFailed, lockUntil, user.id]);
+
+      await logAudit({
+        userId: user.id,
+        organizationId: user.organization_id,
+        action: 'LOGIN_FAILED',
+        entityType: 'User',
+        entityId: user.id,
+        req,
+        metadata: { attemptedEmail: email.trim(), reason: 'PASSWORD_MISMATCH', failedCount: newFailed }
+      });
 
       res.status(401).json({
         success: false,

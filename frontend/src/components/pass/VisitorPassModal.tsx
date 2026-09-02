@@ -180,7 +180,6 @@ export const VisitorPassModal: React.FC<VisitorPassModalProps> = ({ visitId, isO
                         src={photoSrc}
                         alt={passData.visitor_name}
                         className="w-full h-full object-cover"
-                        crossOrigin="anonymous"
                         onError={() => setPhotoError(true)}
                       />
                     ) : (

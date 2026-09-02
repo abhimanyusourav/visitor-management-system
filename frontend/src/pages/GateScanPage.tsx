@@ -44,7 +44,13 @@ export const GateScanPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const res = await api.get(`/api/passes/verify/${encodeURIComponent(token)}`);
+      let res;
+      try {
+        res = await api.get(`/api/passes/scan/${encodeURIComponent(token)}`);
+      } catch {
+        res = await api.get(`/api/passes/verify/${encodeURIComponent(token)}`);
+      }
+
       if (res.data.success && res.data.data) {
         setVerifiedPass(res.data.data);
         setManualToken(token);
@@ -61,20 +67,17 @@ export const GateScanPage: React.FC = () => {
   };
 
   const handleGateCheckIn = async () => {
-    if (!verifiedPass?.visitId) return;
+    if (!verifiedPass?.visitId) {
+      setError('Cannot check in: Visit record ID is missing for this pass.');
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
       const res = await api.post(`/api/visits/${verifiedPass.visitId}/check-in`, {});
       if (res.data.success) {
         setActionSuccess(`Visitor ${verifiedPass.visitorName} checked in successfully.`);
-        // Reload verification status
-        const lookupToken = verifiedPass.qrToken || verifiedPass.passNumber || verifiedPass.visitCode;
-        if (lookupToken) {
-          handleVerifyToken(lookupToken);
-        } else {
-          setVerifiedPass((prev: any) => ({ ...prev, visitStatus: 'CHECKED_IN', checkInTime: new Date().toISOString() }));
-        }
+        setVerifiedPass((prev: any) => ({ ...prev, visitStatus: 'CHECKED_IN', checkInTime: new Date().toISOString() }));
       }
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Check-in failed');
@@ -84,14 +87,23 @@ export const GateScanPage: React.FC = () => {
   };
 
   const handleGateCheckOut = async () => {
-    if (!verifiedPass?.visitId) return;
+    if (!verifiedPass?.visitId) {
+      setError('Cannot check out: Visit record ID is missing for this pass.');
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
       const res = await api.post(`/api/visits/${verifiedPass.visitId}/check-out`);
       if (res.data.success) {
         setActionSuccess(`Visitor ${verifiedPass.visitorName} checked out successfully. QR pass has been invalidated.`);
-        setVerifiedPass((prev: any) => ({ ...prev, visitStatus: 'CHECKED_OUT', isValid: false, verificationStatus: 'ALREADY_CHECKED_OUT', checkOutTime: new Date().toISOString() }));
+        setVerifiedPass((prev: any) => ({
+          ...prev,
+          visitStatus: 'CHECKED_OUT',
+          isValid: false,
+          verificationStatus: 'ALREADY_CHECKED_OUT',
+          checkOutTime: new Date().toISOString()
+        }));
       }
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Check-out failed');

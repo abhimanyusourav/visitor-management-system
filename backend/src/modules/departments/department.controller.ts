@@ -20,7 +20,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     res.json({ success: true, data: deptsRes.rows });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'DEPTS_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'DEPTS_FETCH_FAILED', message: 'Failed to retrieve departments.' } });
   }
 });
 
@@ -76,7 +76,7 @@ router.post('/', requireRole(['SUPER_ADMIN']), async (req: Request, res: Respons
 
     res.status(201).json({ success: true, message: 'Department created successfully', data: newDept });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'DEPT_CREATE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'DEPT_CREATE_FAILED', message: 'Failed to create department.' } });
   }
 });
 
@@ -117,7 +117,7 @@ router.put('/:id', requireRole(['SUPER_ADMIN']), async (req: Request, res: Respo
 
     res.json({ success: true, message: 'Department updated successfully.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'DEPT_UPDATE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'DEPT_UPDATE_FAILED', message: 'Failed to update department.' } });
   }
 });
 
@@ -155,7 +155,7 @@ router.delete('/:id', requireRole(['SUPER_ADMIN']), async (req: Request, res: Re
 
     res.json({ success: true, message: 'Department deleted successfully.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'DEPT_DELETE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'DEPT_DELETE_FAILED', message: 'Failed to delete department.' } });
   }
 });
 

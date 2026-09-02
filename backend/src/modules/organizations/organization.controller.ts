@@ -23,7 +23,7 @@ router.get('/current', async (req: Request, res: Response): Promise<void> => {
 
     res.json({ success: true, data: orgRes.rows[0] });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'ORG_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'ORG_FETCH_FAILED', message: 'Failed to retrieve organization settings.' } });
   }
 });
 
@@ -57,7 +57,7 @@ router.put('/current', requirePermission('org:manage'), async (req: Request, res
 
     res.json({ success: true, message: 'Organization settings updated successfully.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'ORG_UPDATE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'ORG_UPDATE_FAILED', message: 'Failed to update organization settings.' } });
   }
 });
 

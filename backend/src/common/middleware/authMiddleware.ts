@@ -17,12 +17,14 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   try {
     let token: string | undefined;
 
-    // Check Authorization header
+    // Check Authorization header, cookies, or query parameter (e.g. for authenticated images)
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       token = authHeader.substring(7);
     } else if (req.cookies && req.cookies.access_token) {
       token = req.cookies.access_token;
+    } else if (req.query && typeof req.query.token === 'string') {
+      token = req.query.token;
     }
 
     if (!token) {
@@ -88,6 +90,12 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       allowedSiteIds = userSitesRes.rows.map((s: any) => s.site_id);
     }
 
+    // Check if user is linked to an employee profile
+    const empRes = await query(`
+      SELECT id FROM employees WHERE user_id = $1 AND deleted_at IS NULL LIMIT 1
+    `, [user.id]);
+    const employeeId = empRes.rows.length > 0 ? empRes.rows[0].id : undefined;
+
     req.user = {
       userId: user.id,
       organizationId: user.organization_id,
@@ -97,6 +105,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       email: user.email,
       firstName: user.first_name,
       lastName: user.last_name,
+      employeeId,
     };
 
     next();

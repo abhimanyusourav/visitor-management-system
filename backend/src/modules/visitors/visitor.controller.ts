@@ -70,7 +70,7 @@ router.get('/', async (req: Request, res: Response) => {
       }
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'VISITORS_FETCH_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'VISITORS_FETCH_FAILED', message: 'Failed to retrieve visitor directory.' } });
   }
 });
 
@@ -99,7 +99,7 @@ router.post('/lookup', async (req: Request, res: Response): Promise<void> => {
 
     res.json({ success: true, data: visitorRes.rows[0], message: 'Visitor profile found' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'LOOKUP_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'LOOKUP_FAILED', message: 'Failed to lookup visitor profile.' } });
   }
 });
 
@@ -242,7 +242,7 @@ router.post('/', requirePermission('visitor:create'), async (req: Request, res: 
 
     res.status(201).json({ success: true, message: 'Visitor profile saved successfully', data: resultVisitor });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'VISITOR_SAVE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'VISITOR_SAVE_FAILED', message: 'Failed to save visitor profile.' } });
   }
 });
 
@@ -272,7 +272,7 @@ router.post('/:id/blacklist', requirePermission('visitor:blacklist'), async (req
 
     res.json({ success: true, message: `Visitor ${is_blacklisted ? 'blacklisted' : 'removed from blacklist'} successfully.` });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: { code: 'BLACKLIST_UPDATE_FAILED', message: err.message } });
+    res.status(500).json({ success: false, error: { code: 'BLACKLIST_UPDATE_FAILED', message: 'Failed to update visitor blacklist status.' } });
   }
 });
 

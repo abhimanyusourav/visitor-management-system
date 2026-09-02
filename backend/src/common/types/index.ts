@@ -49,6 +49,7 @@ export interface UserContext {
   email: string;
   firstName: string;
   lastName: string;
+  employeeId?: string;
 }
 
 export interface ApiResponse<T = any> {
