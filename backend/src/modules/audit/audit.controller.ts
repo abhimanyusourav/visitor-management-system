@@ -23,7 +23,7 @@ export async function logAudit(params: AuditParams): Promise<void> {
     const userAgent = params.req ? params.req.headers['user-agent'] : null;
 
     // Cryptographic hash chain: retrieve previous event hash
-    let previousHash = 'GENESIS_HASH_00000000000000000000000000000000000000000000000000000000';
+    let previousHash = '0'.repeat(64);
     try {
       const latestRes = await query(`
         SELECT event_hash FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 1
