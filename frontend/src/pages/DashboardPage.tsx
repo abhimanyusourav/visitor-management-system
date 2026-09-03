@@ -43,25 +43,34 @@ export const DashboardPage: React.FC = () => {
 
   const fetchDashboardData = async () => {
     try {
-      const [statsRes, chartsRes, visitsRes] = await Promise.all([
+      const [statsResult, chartsResult, visitsResult] = await Promise.allSettled([
         api.get('/api/dashboard/stats'),
         api.get('/api/dashboard/charts'),
         api.get('/api/visits?limit=6'),
       ]);
 
-      if (statsRes.data?.success && statsRes.data?.data) {
-        setStats(statsRes.data.data);
+      if (statsResult.status === 'fulfilled' && statsResult.value.data?.success && statsResult.value.data?.data) {
+        setStats(statsResult.value.data.data);
+      } else if (statsResult.status === 'rejected') {
+        console.error('Failed to load dashboard stats:', statsResult.reason);
       }
-      if (chartsRes.data?.success && chartsRes.data?.data) {
+
+      if (chartsResult.status === 'fulfilled' && chartsResult.value.data?.success && chartsResult.value.data?.data) {
+        const cData = chartsResult.value.data.data;
         setCharts({
-          visitsByDay: Array.isArray(chartsRes.data.data.visitsByDay) ? chartsRes.data.data.visitsByDay : [],
-          visitsByDepartment: Array.isArray(chartsRes.data.data.visitsByDepartment) ? chartsRes.data.data.visitsByDepartment : [],
-          visitorTypeDistribution: Array.isArray(chartsRes.data.data.visitorTypeDistribution) ? chartsRes.data.data.visitorTypeDistribution : [],
-          visitsByPurpose: Array.isArray(chartsRes.data.data.visitsByPurpose) ? chartsRes.data.data.visitsByPurpose : [],
+          visitsByDay: Array.isArray(cData.visitsByDay) ? cData.visitsByDay : [],
+          visitsByDepartment: Array.isArray(cData.visitsByDepartment) ? cData.visitsByDepartment : [],
+          visitorTypeDistribution: Array.isArray(cData.visitorTypeDistribution) ? cData.visitorTypeDistribution : [],
+          visitsByPurpose: Array.isArray(cData.visitsByPurpose) ? cData.visitsByPurpose : [],
         });
+      } else if (chartsResult.status === 'rejected') {
+        console.error('Failed to load dashboard charts:', chartsResult.reason);
       }
-      if (visitsRes.data?.success && Array.isArray(visitsRes.data?.data)) {
-        setRecentVisits(visitsRes.data.data);
+
+      if (visitsResult.status === 'fulfilled' && visitsResult.value.data?.success && Array.isArray(visitsResult.value.data?.data)) {
+        setRecentVisits(visitsResult.value.data.data);
+      } else if (visitsResult.status === 'rejected') {
+        console.error('Failed to load recent visits:', visitsResult.reason);
       }
     } catch (err) {
       console.error('Failed to load dashboard:', err);

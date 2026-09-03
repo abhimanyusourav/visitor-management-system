@@ -66,6 +66,7 @@ router.get('/dashboard/stats', async (req: Request, res: Response): Promise<void
       }
     });
   } catch (err: any) {
+    console.error('Dashboard stats error:', err);
     res.status(500).json({ success: false, error: { code: 'DASHBOARD_STATS_FAILED', message: 'Failed to retrieve dashboard metrics.' } });
   }
 });
@@ -96,11 +97,12 @@ router.get('/dashboard/charts', async (req: Request, res: Response): Promise<voi
     `, params);
 
     // 2. Breakdown by Department
+    const deptConditions = conditions.map(c => `v.${c}`).join(' AND ');
     const deptRes = await query(`
       SELECT d.name as department, COUNT(v.id) as count
       FROM visits v
       JOIN departments d ON v.department_id = d.id
-      WHERE v.${where.replace(/organization_id/g, 'v.organization_id').replace(/deleted_at/g, 'v.deleted_at').replace(/site_id/g, 'v.site_id')}
+      WHERE ${deptConditions}
       GROUP BY d.name
       ORDER BY count DESC
       LIMIT 6
@@ -135,6 +137,7 @@ router.get('/dashboard/charts', async (req: Request, res: Response): Promise<voi
       }
     });
   } catch (err: any) {
+    console.error('Dashboard charts error:', err);
     res.status(500).json({ success: false, error: { code: 'DASHBOARD_CHARTS_FAILED', message: 'Failed to retrieve chart analytics.' } });
   }
 });
