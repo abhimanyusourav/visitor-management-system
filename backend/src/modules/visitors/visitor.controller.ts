@@ -1,14 +1,16 @@
 import { Request, Response, Router } from 'express';
 import { query } from '../../database/db.js';
 import { authMiddleware } from '../../common/middleware/authMiddleware.js';
+import { siteContextMiddleware } from '../../common/middleware/siteContextMiddleware.js';
 import { requirePermission } from '../../common/middleware/rbacMiddleware.js';
 import { logAudit } from '../audit/audit.controller.js';
 import { storageService } from '../storage/storage.service.js';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(siteContextMiddleware);
 
-// GET /api/visitors - Search & list visitor directory
+// GET /api/visitors - Search & list visitor directory with site-aware privacy filtering
 router.get('/', async (req: Request, res: Response) => {
   try {
     const { search, visitorType, isBlacklisted, page = '1', limit = '20' } = req.query;
@@ -16,6 +18,8 @@ router.get('/', async (req: Request, res: Response) => {
     const limitNum = parseInt(limit as string, 10);
     const offset = (pageNum - 1) * limitNum;
     const orgId = req.user!.organizationId;
+    const isSuperAdmin = req.user!.role === 'SUPER_ADMIN';
+    const allowedSites = req.user!.allowedSiteIds || [];
 
     const conditions: string[] = ['v.organization_id = $1', 'v.deleted_at IS NULL'];
     const params: any[] = [orgId];
@@ -45,23 +49,38 @@ router.get('/', async (req: Request, res: Response) => {
     const total = parseInt(countRes.rows[0]?.total || '0', 10);
 
     params.push(limitNum, offset);
+    const limitParamIndex = params.length - 1;
+    const offsetParamIndex = params.length;
+
     const visitorsRes = await query(`
       SELECT 
         v.id, v.first_name, v.last_name, v.full_name, v.email, v.mobile_number,
         v.company_name, v.designation, v.default_visitor_type, v.id_type,
         v.id_number_masked, v.photo_url, v.notes, v.is_blacklisted, v.blacklist_reason,
         v.created_at, v.updated_at,
-        (SELECT COUNT(*) FROM visits vt WHERE vt.visitor_id = v.id) as total_visits_count,
-        (SELECT MAX(check_in_time) FROM visits vt WHERE vt.visitor_id = v.id) as last_visit_date
+        (SELECT COUNT(*) FROM visits vt WHERE vt.visitor_id = v.id AND vt.deleted_at IS NULL) as total_visits_count,
+        (SELECT MAX(check_in_time) FROM visits vt WHERE vt.visitor_id = v.id AND vt.deleted_at IS NULL) as last_visit_date
       FROM visitors v
       WHERE ${whereClause}
       ORDER BY v.updated_at DESC
-      LIMIT $${params.length - 1} OFFSET $${params.length}
+      LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
     `, params);
+
+    // Filter sensitive fields for non-superadmins cross-site
+    const sanitizedVisitors = visitorsRes.rows.map((row: any) => {
+      if (!isSuperAdmin) {
+        return {
+          ...row,
+          notes: null, // Protect cross-site internal notes
+          blacklist_reason: row.is_blacklisted ? 'Security Flag' : null,
+        };
+      }
+      return row;
+    });
 
     res.json({
       success: true,
-      data: visitorsRes.rows,
+      data: sanitizedVisitors,
       meta: {
         page: pageNum,
         limit: limitNum,
@@ -74,7 +93,7 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/visitors/lookup - Instant search by phone for fast auto-fill
+// POST /api/visitors/lookup - Instant search by phone for fast auto-fill (Minimal necessary disclosure)
 router.post('/lookup', async (req: Request, res: Response): Promise<void> => {
   try {
     const { mobile_number } = req.body;
@@ -85,8 +104,12 @@ router.post('/lookup', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Return ONLY minimal necessary registration fields - Never leak internal notes, full history, or raw tokens
     const visitorRes = await query(`
-      SELECT *
+      SELECT 
+        id, first_name, last_name, full_name, email, mobile_number,
+        company_name, designation, default_visitor_type, id_type,
+        id_number_masked, photo_url, is_blacklisted
       FROM visitors
       WHERE organization_id = $1 AND (mobile_number = $2 OR mobile_number LIKE $3) AND deleted_at IS NULL
       LIMIT 1
@@ -97,17 +120,79 @@ router.post('/lookup', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    res.json({ success: true, data: visitorRes.rows[0], message: 'Visitor profile found' });
+    const v = visitorRes.rows[0];
+    res.json({
+      success: true,
+      data: {
+        id: v.id,
+        first_name: v.first_name,
+        last_name: v.last_name,
+        full_name: v.full_name,
+        email: v.email,
+        mobile_number: v.mobile_number,
+        company_name: v.company_name,
+        designation: v.designation,
+        default_visitor_type: v.default_visitor_type,
+        id_type: v.id_type,
+        id_number_masked: v.id_number_masked,
+        photo_url: v.photo_url,
+        is_blacklisted: v.is_blacklisted,
+      },
+      message: 'Visitor profile found'
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: { code: 'LOOKUP_FAILED', message: 'Failed to lookup visitor profile.' } });
   }
 });
 
-// GET /api/visitors/:id - Profile and past visits
+// GET /api/visitors/:id/history - Dedicated site-authorized visit history
+router.get('/:id/history', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const visitorId = String(req.params.id);
+    const orgId = req.user!.organizationId;
+    const isSuperAdmin = req.user!.role === 'SUPER_ADMIN';
+    const allowedSites = req.user!.allowedSiteIds || [];
+
+    const historyParams: any[] = [visitorId, orgId];
+    let siteFilter = '';
+    if (!isSuperAdmin) {
+      historyParams.push(allowedSites);
+      siteFilter = `AND v.site_id = ANY($${historyParams.length})`;
+    }
+
+    const visitsRes = await query(`
+      SELECT 
+        v.id, v.visit_code, v.site_id, v.visitor_type, v.purpose, v.status,
+        v.expected_date, v.expected_time, v.check_in_time, v.check_out_time,
+        s.name as site_name, s.code as site_code,
+        e.first_name as host_first_name, e.last_name as host_last_name,
+        d.name as department_name,
+        vp.pass_number, vp.status as pass_status
+      FROM visits v
+      JOIN sites s ON v.site_id = s.id
+      JOIN employees e ON v.host_employee_id = e.id
+      JOIN departments d ON v.department_id = d.id
+      LEFT JOIN visitor_passes vp ON vp.visit_id = v.id
+      WHERE v.visitor_id = $1 AND v.organization_id = $2 ${siteFilter} AND v.deleted_at IS NULL
+      ORDER BY v.created_at DESC
+    `, historyParams);
+
+    res.json({
+      success: true,
+      data: visitsRes.rows
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: { code: 'HISTORY_FETCH_FAILED', message: 'Failed to retrieve visitor history.' } });
+  }
+});
+
+// GET /api/visitors/:id - Profile and site-scoped past visits
 router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const visitorId = String(req.params.id);
     const orgId = req.user!.organizationId;
+    const isSuperAdmin = req.user!.role === 'SUPER_ADMIN';
+    const allowedSites = req.user!.allowedSiteIds || [];
 
     const visitorRes = await query(`
       SELECT * FROM visitors WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
@@ -120,30 +205,42 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
 
     const visitor = visitorRes.rows[0];
 
-    // Fetch visits history
+    // Fetch visits history strictly scoped to user's authorized sites
+    const visitsParams: any[] = [visitorId, orgId];
+    let siteFilter = '';
+    if (!isSuperAdmin) {
+      visitsParams.push(allowedSites);
+      siteFilter = `AND v.site_id = ANY($${visitsParams.length})`;
+    }
+
     const visitsRes = await query(`
       SELECT 
-        v.id, v.visit_code, v.visitor_type, v.purpose, v.status,
+        v.id, v.visit_code, v.site_id, v.visitor_type, v.purpose, v.status,
         v.expected_date, v.expected_time, v.check_in_time, v.check_out_time,
         s.name as site_name, s.code as site_code,
         e.first_name as host_first_name, e.last_name as host_last_name,
         d.name as department_name,
-        vp.pass_number, vp.qr_token
+        vp.pass_number, vp.status as pass_status
       FROM visits v
       JOIN sites s ON v.site_id = s.id
       JOIN employees e ON v.host_employee_id = e.id
       JOIN departments d ON v.department_id = d.id
       LEFT JOIN visitor_passes vp ON vp.visit_id = v.id
-      WHERE v.visitor_id = $1 AND v.organization_id = $2
+      WHERE v.visitor_id = $1 AND v.organization_id = $2 ${siteFilter} AND v.deleted_at IS NULL
       ORDER BY v.created_at DESC
-    `, [visitorId, orgId]);
+    `, visitsParams);
+
+    // Mask internal notes and blacklist details for non-superadmins cross-site
+    const safeVisitor = {
+      ...visitor,
+      notes: isSuperAdmin ? visitor.notes : null,
+      blacklist_reason: isSuperAdmin ? visitor.blacklist_reason : (visitor.is_blacklisted ? 'Security Flag' : null),
+      visits: visitsRes.rows,
+    };
 
     res.json({
       success: true,
-      data: {
-        ...visitor,
-        visits: visitsRes.rows,
-      }
+      data: safeVisitor,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: { code: 'VISITOR_FETCH_FAILED', message: err.message } });

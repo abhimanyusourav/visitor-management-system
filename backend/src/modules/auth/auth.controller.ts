@@ -155,12 +155,21 @@ router.post('/login', authRateLimiter, async (req: Request, res: Response): Prom
       expiresIn: config.jwt.expiresIn as any,
     });
 
-    // Set secure cookie
+    // Calculate cookie maxAge consistent with JWT expiry (e.g. 2h -> 7,200,000 ms)
+    const expiryMs = (() => {
+      const expStr = String(config.jwt.expiresIn).toLowerCase().trim();
+      if (expStr.endsWith('h')) return parseInt(expStr, 10) * 3600 * 1000;
+      if (expStr.endsWith('d')) return parseInt(expStr, 10) * 86400 * 1000;
+      if (expStr.endsWith('m')) return parseInt(expStr, 10) * 60 * 1000;
+      return 2 * 3600 * 1000;
+    })();
+
+    // Set secure HttpOnly cookie aligned with JWT expiration
     res.cookie('access_token', token, {
       httpOnly: true,
       secure: config.env === 'production',
       sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000,
+      maxAge: expiryMs,
     });
 
     await logAudit({

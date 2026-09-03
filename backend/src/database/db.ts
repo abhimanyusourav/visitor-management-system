@@ -146,11 +146,32 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
       const isDoUpdate = /ON CONFLICT.*DO UPDATE/i.test(rest);
       const isReturning = /RETURNING/i.test(rest);
 
+      // Extract values inside VALUES (...)
+      const valMatch = rest.match(/^\s*\(([^)]+)\)/);
+      const valTokens = valMatch ? valMatch[1].split(',').map(v => v.trim()) : [];
+
       const record: any = {};
       columns.forEach((col, idx) => {
-        let val = params[idx];
-        if (val === undefined) val = null;
-        record[col] = val;
+        const token = valTokens[idx];
+        if (token) {
+          const paramMatch = token.match(/^\$([0-9]+)$/);
+          if (paramMatch) {
+            const pIdx = parseInt(paramMatch[1], 10) - 1;
+            record[col] = params[pIdx] !== undefined ? params[pIdx] : null;
+          } else if (token.toUpperCase() === 'NULL') {
+            record[col] = null;
+          } else if (token.toUpperCase() === 'TRUE') {
+            record[col] = true;
+          } else if (token.toUpperCase() === 'FALSE') {
+            record[col] = false;
+          } else if (/^'([^']*)'$/.test(token)) {
+            record[col] = token.replace(/^'|'$/g, '');
+          } else {
+            record[col] = params[idx] !== undefined ? params[idx] : null;
+          }
+        } else {
+          record[col] = params[idx] !== undefined ? params[idx] : null;
+        }
       });
 
       if (!record.id) {
@@ -206,7 +227,7 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
           existingKey = id;
           break;
         }
-        if (record.qr_token && row.qr_token && row.qr_token === record.qr_token) {
+        if (record.qr_token_hash && row.qr_token_hash && row.qr_token_hash === record.qr_token_hash) {
           existingKey = id;
           break;
         }
@@ -339,6 +360,17 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
             record.is_blacklisted = Boolean(params[0]);
           }
 
+          if (tableName === 'audit_logs') {
+            const actionMatch = setClause.match(/action\s*=\s*'([^']+)'/i);
+            if (actionMatch) record.action = actionMatch[1];
+            const prevHashMatch = setClause.match(/previous_hash\s*=\s*'([^']+)'/i);
+            if (prevHashMatch) record.previous_hash = prevHashMatch[1];
+            const eventHashMatch = setClause.match(/event_hash\s*=\s*'([^']+)'/i);
+            if (eventHashMatch) record.event_hash = eventHashMatch[1];
+            if (setClause.includes('action = $1') && params[0]) record.action = params[0];
+            if (setClause.includes('previous_hash = $1') && params[0]) record.previous_hash = params[0];
+          }
+
           if (tableName === 'departments') {
             if (normalized.includes('name = COALESCE($1, name)')) {
               if (params[0] !== undefined && params[0] !== null) record.name = params[0];
@@ -453,7 +485,7 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
 
       if (params.length === 1 && typeof params[0] === 'string' && params[0].includes('@')) {
         results = results.filter(r => r.email && r.email.toLowerCase() === params[0].toLowerCase());
-      } else if (params.length === 1 && typeof params[0] === 'string' && params[0].length === 36 && normalized.includes('WHERE u.id = $1')) {
+      } else if (params.length === 1 && typeof params[0] === 'string' && params[0].length === 36 && (normalized.includes('u.id = $1') || normalized.includes('id = $1'))) {
         results = results.filter(r => r.id === params[0]);
       }
 
@@ -580,6 +612,13 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
         if (normalized.includes('WHERE id = $1') || normalized.includes('WHERE e.id = $1')) {
           results = results.filter((e: any) => e.id === params[0]);
         }
+        if (normalized.includes('employee_sites') || normalized.includes('es.site_id')) {
+          const empSitesTable = memoryDb.get('employee_sites') || new Map();
+          const targetSiteId = params[2];
+          results = results.filter((e: any) => {
+            return Array.from(empSitesTable.values()).some((es: any) => es.employee_id === e.id && es.site_id === targetSiteId);
+          });
+        }
         if (normalized.includes('user_id = $1') || normalized.includes('e.user_id = $1')) {
           results = results.filter((e: any) => e.user_id === params[0]);
         }
@@ -671,9 +710,10 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
           host_first_name: emp.first_name || 'Host',
           host_last_name: emp.last_name || 'User',
           department_name: dept.name || 'Operations',
-          site_id: site.id,
+          site_id: site.id || visit.site_id,
           site_name: site.name || 'Akriti JewelCraftz - Baghpat Branch',
           site_code: site.code || 'AKR-BGP',
+          organization_id: org.id || visit.organization_id || '20000000-0000-0000-0000-000000000001',
           organization_name: org.name || 'Akriti JewelCraftz Pvt Ltd',
         };
       });
@@ -682,7 +722,7 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
         if (normalized.includes('v.organization_id = $1') && params[0]) {
           results = results.filter((p: any) => !p.organization_id || p.organization_id === params[0]);
         }
-        const allowHumanReadable = normalized.includes('pass_number = $3') || normalized.includes('visit_code = $3');
+        const allowHumanReadable = normalized.includes('pass_number =') || normalized.includes('visit_code =');
         results = results.filter((p: any) => {
           return params.some((param: any) => {
             if (p.qr_token === param || p.qr_token_hash === param || p.visit_id === param || p.id === param) {
@@ -693,6 +733,14 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
             }
             return false;
           });
+        });
+      }
+
+      // If query does not explicitly request qr_token, strip it from projection
+      if (!normalized.toLowerCase().includes('qr_token') && !normalized.toLowerCase().includes('vp.*')) {
+        results = results.map((r: any) => {
+          const { qr_token, qr_token_hash, ...clean } = r;
+          return clean;
         });
       }
 
@@ -771,15 +819,40 @@ function executeInMemoryQuery<T extends QueryResultRow = any>(
           site_name: site.name || 'Akriti JewelCraftz - Baghpat Branch',
           site_code: site.code || 'AKR-BGP',
           pass_number: pass.pass_number,
-          qr_token: pass.qr_token,
           pass_status: pass.status,
           vehicle_type: vehicle.vehicle_type,
           vehicle_number: vehicle.vehicle_number,
+          checkin_photo_url: v.checkin_photo_url || null,
         };
       });
 
       if (params.length > 0 && typeof params[0] === 'string' && params[0].length === 36 && (normalized.includes('WHERE v.id = $1') || normalized.includes('WHERE id = $1'))) {
         results = results.filter(r => r.id === params[0]);
+      }
+
+      // Filter by visitor_id
+      if (normalized.includes('v.visitor_id = $1') || normalized.includes('visitor_id = $1')) {
+        results = results.filter(r => r.visitor_id === params[0]);
+      }
+
+      // Filter by site_id = ANY($...)
+      const anySiteMatch = normalized.match(/(?:v\.)?site_id\s*=\s*ANY\s*\(\$([0-9]+)\)/i);
+      if (anySiteMatch) {
+        const pIdx = parseInt(anySiteMatch[1], 10) - 1;
+        const allowed = params[pIdx];
+        if (Array.isArray(allowed)) {
+          results = results.filter(r => allowed.includes(r.site_id));
+        }
+      }
+
+      // Filter by site_id = $...
+      const eqSiteMatch = normalized.match(/(?:v\.)?site_id\s*=\s*\$([0-9]+)/i);
+      if (eqSiteMatch && !anySiteMatch) {
+        const pIdx = parseInt(eqSiteMatch[1], 10) - 1;
+        const targetSite = params[pIdx];
+        if (typeof targetSite === 'string') {
+          results = results.filter(r => r.site_id === targetSite);
+        }
       }
 
       // Filter by search keyword (ILIKE)

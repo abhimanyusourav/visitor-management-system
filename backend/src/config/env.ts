@@ -4,8 +4,22 @@ import path from 'path';
 // Load environment configuration from .env
 dotenv.config();
 
+export function validateProductionSecrets(env: string, jwtSecret?: string, refreshSecret?: string): void {
+  if (env.toLowerCase() === 'production') {
+    if (!jwtSecret || jwtSecret.trim().length < 32) {
+      throw new Error('FATAL SECURITY CONFIGURATION: JWT_SECRET environment variable is mandatory and must be at least 32 characters in production.');
+    }
+    if (!refreshSecret || refreshSecret.trim().length < 32) {
+      throw new Error('FATAL SECURITY CONFIGURATION: REFRESH_TOKEN_SECRET environment variable is mandatory and must be at least 32 characters in production.');
+    }
+  }
+}
+
+const currentEnv = process.env.NODE_ENV || 'development';
+validateProductionSecrets(currentEnv, process.env.JWT_SECRET, process.env.REFRESH_TOKEN_SECRET);
+
 export const config = {
-  env: process.env.NODE_ENV || 'development',
+  env: currentEnv,
   port: parseInt(process.env.PORT || '5000', 10),
   host: process.env.HOST || '0.0.0.0',
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',

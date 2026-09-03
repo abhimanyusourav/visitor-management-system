@@ -133,4 +133,40 @@ router.put('/:id', requirePermission('site:manage'), async (req: Request, res: R
   }
 });
 
+// DELETE /api/gates/:id - Soft delete gate
+router.delete('/:id', requirePermission('site:manage'), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const gateId = String(req.params.id);
+    const orgId = req.user!.organizationId;
+    const siteId = req.siteId;
+
+    const oldRes = await query(`
+      SELECT * FROM gates WHERE id = $1 AND organization_id = $2 AND site_id = $3 AND deleted_at IS NULL
+    `, [gateId, orgId, siteId]);
+
+    if (oldRes.rows.length === 0) {
+      res.status(404).json({ success: false, error: { code: 'GATE_NOT_FOUND', message: 'Gate not found on this site.' } });
+      return;
+    }
+
+    await query(`
+      UPDATE gates SET deleted_at = NOW(), is_active = FALSE WHERE id = $1 AND organization_id = $2 AND site_id = $3
+    `, [gateId, orgId, siteId]);
+
+    await logAudit({
+      userId: req.user!.userId,
+      organizationId: orgId,
+      siteId,
+      action: 'GATE_DELETED',
+      entityType: 'Gate',
+      entityId: gateId,
+      req,
+    });
+
+    res.json({ success: true, message: 'Gate deleted successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: { code: 'GATE_DELETE_FAILED', message: 'Failed to delete gate.' } });
+  }
+});
+
 export const gateRouter = router;

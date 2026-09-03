@@ -50,4 +50,27 @@ describe('VMS Logical Gates & Checkpoint Tracking Tests', () => {
     assert.strictEqual(res.body.success, true);
     assert.strictEqual(res.body.data.name, 'Warehouse North Gate');
   });
+
+  it('should reject visit creation if gate_id belongs to another site', async () => {
+    // 40000000-0000-0000-0000-000000000003 is seeded for Basi site
+    const siteBasiGateId = '40000000-0000-0000-0000-000000000003';
+    const hostEmpAId = '80000000-0000-0000-0000-000000000001';
+
+    const res = await request(app)
+      .post('/api/visits')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .set('X-Site-Id', baghpatSiteId)
+      .send({
+        first_name: 'CrossGate',
+        last_name: 'Visitor',
+        mobile_number: '+91-9988776633',
+        purpose: 'Meeting',
+        visitor_type: 'Guest',
+        host_employee_id: hostEmpAId,
+        gate_id: siteBasiGateId,
+      });
+
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.error.code, 'INVALID_GATE');
+  });
 });

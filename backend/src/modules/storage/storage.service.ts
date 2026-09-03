@@ -113,17 +113,51 @@ router.get('/visitors/:filename', authMiddleware, async (req: Request, res: Resp
       return;
     }
 
-    // Verify organization and site scoping for the visitor photo
+    // Verify organization and site authorization for the requested photo
     const photoUrlFragment = `/api/storage/visitors/${path.basename(filename)}`;
-    const visitorRes = await query(`
-      SELECT organization_id FROM visitors WHERE photo_url = $1 AND deleted_at IS NULL
+    const isSuperAdmin = req.user!.role === 'SUPER_ADMIN';
+    const userOrgId = req.user!.organizationId;
+    const allowedSites = req.user!.allowedSiteIds || [];
+
+    // Check all visits referencing this photo (as check-in photo or visitor profile photo)
+    const photoVisitsRes = await query(`
+      SELECT v.site_id, v.organization_id
+      FROM visits v
+      WHERE (v.checkin_photo_url = $1 OR v.visitor_id IN (SELECT id FROM visitors WHERE photo_url = $1 AND deleted_at IS NULL))
+        AND v.deleted_at IS NULL
     `, [photoUrlFragment]);
 
-    if (visitorRes.rows.length > 0) {
-      const visitorOrgId = visitorRes.rows[0].organization_id;
-      if (req.user!.role !== 'SUPER_ADMIN' && visitorOrgId !== req.user!.organizationId) {
-        res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED_PHOTO_ACCESS', message: 'Not authorized to access this visitor photo.' } });
+    if (photoVisitsRes.rows.length > 0) {
+      const orgId = photoVisitsRes.rows[0].organization_id;
+      if (!isSuperAdmin && orgId !== userOrgId) {
+        res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED_PHOTO_ACCESS', message: 'Not authorized for this photo.' } });
         return;
+      }
+
+      // Priority 6: User authorized only for Site A must NOT retrieve Site B photo
+      if (!isSuperAdmin) {
+        const associatedSiteIds = photoVisitsRes.rows.map((r: any) => r.site_id);
+        const hasSiteAccess = associatedSiteIds.some((sId: string) => allowedSites.includes(sId));
+        if (!hasSiteAccess) {
+          res.status(403).json({
+            success: false,
+            error: { code: 'UNAUTHORIZED_PHOTO_ACCESS', message: 'You are not authorized to view visitor photos for this factory site.' }
+          });
+          return;
+        }
+      }
+    } else {
+      // Fallback check against visitor master record if no visit has been registered yet
+      const visitorRes = await query(`
+        SELECT organization_id FROM visitors WHERE photo_url = $1 AND deleted_at IS NULL
+      `, [photoUrlFragment]);
+
+      if (visitorRes.rows.length > 0) {
+        const visitorOrgId = visitorRes.rows[0].organization_id;
+        if (!isSuperAdmin && visitorOrgId !== userOrgId) {
+          res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED_PHOTO_ACCESS', message: 'Not authorized for this photo.' } });
+          return;
+        }
       }
     }
 

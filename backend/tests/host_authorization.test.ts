@@ -131,4 +131,24 @@ describe('VMS Host Employee Authorization Tests', () => {
     assert.strictEqual(validApproveRes.status, 200);
     assert.strictEqual(validApproveRes.body.success, true);
   });
+
+  it('should reject visit creation if host employee is not assigned to the active site', async () => {
+    // 80000000-0000-0000-0000-000000000002 is assigned to Basi site, not Baghpat
+    const siteBasiHostId = '80000000-0000-0000-0000-000000000002';
+    const res = await request(app)
+      .post('/api/visits')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .set('X-Site-Id', siteBaghpatId)
+      .send({
+        first_name: 'CrossSite',
+        last_name: 'Visitor',
+        mobile_number: '+91-9988776622',
+        purpose: 'Meeting',
+        visitor_type: 'Guest',
+        host_employee_id: siteBasiHostId,
+      });
+
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.error.code, 'INVALID_HOST_SITE');
+  });
 });

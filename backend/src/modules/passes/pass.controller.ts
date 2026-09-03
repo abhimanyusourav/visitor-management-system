@@ -42,19 +42,19 @@ router.get('/verify/:token', async (req: Request, res: Response): Promise<void> 
 
     const tokenHash = hashQrToken(token);
 
-    // Look up ONLY by secure token hash (or raw token for legacy fallback)
+    // Look up ONLY by secure token hash (or legacy raw token for backwards compatibility during migration)
     // Never match pass_number or visit_code on this public route
     const passRes = await query(`
       SELECT 
         vp.id as pass_id, vp.pass_number, vp.status as pass_status,
         vp.issued_at, vp.valid_until,
-        v.id as visit_id, v.visit_code, v.visitor_type, v.purpose, v.status as visit_status,
+        v.id as visit_id, v.organization_id, v.site_id, v.visit_code, v.visitor_type, v.purpose, v.status as visit_status,
         v.expected_date, v.expected_time, v.check_in_time, v.check_out_time,
-        vt.full_name as visitor_name, vt.company_name,
+        vt.full_name as visitor_name, vt.company_name, vt.photo_url as visitor_photo,
         e.first_name as host_first_name, e.last_name as host_last_name,
         d.name as department_name,
         s.id as site_id, s.name as site_name, s.code as site_code,
-        o.name as organization_name
+        o.id as organization_id, o.name as organization_name
       FROM visitor_passes vp
       JOIN visits v ON vp.visit_id = v.id
       JOIN visitors vt ON v.visitor_id = vt.id
@@ -86,28 +86,62 @@ router.get('/verify/:token', async (req: Request, res: Response): Promise<void> 
       verificationStatus = 'REVOKED';
     }
 
-    // Check if staff member is authenticated to attach operational details (visitId, photo)
+    // Check if staff member is authenticated with rigorous fail-closed validation:
+    // 1. JWT signature and expiry valid
+    // 2. User exists and is active
+    // 3. User belongs to same organization
+    // 4. User is authorized for pass.site_id (or SUPER_ADMIN)
     let isStaffAuthenticated = false;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       try {
-        const decoded = jwt.verify(authHeader.substring(7), config.jwt.secret) as any;
-        if (decoded && (!pass.organization_id || decoded.organizationId === pass.organization_id)) {
-          isStaffAuthenticated = true;
+        const tokenStr = authHeader.substring(7);
+        const decoded = jwt.verify(tokenStr, config.jwt.secret) as any;
+        if (decoded && decoded.userId && decoded.organizationId && pass.organization_id) {
+          const userCheck = await query(`
+            SELECT u.id, u.organization_id, r.slug as role_slug, u.is_active
+            FROM users u
+            JOIN roles r ON u.role_id = r.id
+            WHERE u.id = $1 AND u.deleted_at IS NULL
+          `, [decoded.userId]);
+
+          if (userCheck.rows.length > 0 && userCheck.rows[0].is_active) {
+            const u = userCheck.rows[0];
+            const sitesRes = await query(`SELECT site_id FROM user_sites WHERE user_id = $1`, [u.id]);
+            const userAllowedSites = sitesRes.rows.map((r: any) => r.site_id);
+            const isSuperAdmin = u.role_slug === 'SUPER_ADMIN';
+
+            if (
+              u.organization_id === pass.organization_id &&
+              (isSuperAdmin || (pass.site_id && userAllowedSites.includes(pass.site_id)))
+            ) {
+              isStaffAuthenticated = true;
+            }
+          }
         }
       } catch {
-        // Proceed as public unauthenticated verification
+        isStaffAuthenticated = false;
       }
     }
 
-    // Public sanitized verification payload - Zero PII by default unless authenticated staff
+    // Helper to mask PII for unauthenticated public viewers (e.g. "John Doe" -> "J*** D**")
+    const maskName = (name: string): string => {
+      if (!name) return 'Visitor';
+      return name
+        .split(' ')
+        .filter(Boolean)
+        .map((part) => (part.length <= 1 ? part : part[0] + '*'.repeat(Math.min(part.length - 1, 4))))
+        .join(' ');
+    };
+
+    // Public sanitized verification payload - Zero unnecessary PII disclosed unless authorized staff
     res.json({
       success: true,
       data: {
         ...(isStaffAuthenticated ? { visitId: pass.visit_id, visitorPhoto: pass.visitor_photo } : {}),
         isValid: verificationStatus === 'VALID',
         verificationStatus,
-        visitorName: pass.visitor_name,
+        visitorName: isStaffAuthenticated ? pass.visitor_name : maskName(pass.visitor_name),
         companyName: pass.company_name || 'Individual',
         hostName: pass.host_first_name ? `${pass.host_first_name} ${pass.host_last_name || ''}`.trim() : 'Duty Host',
         department: pass.department_name || 'Operations',
@@ -131,12 +165,14 @@ router.get('/verify/:token', async (req: Request, res: Response): Promise<void> 
 // Authenticated pass management routes
 router.use(authMiddleware);
 
-// GET /api/passes/scan/:token - Staff gate scanning & lookup endpoint
+// GET /api/passes/scan/:token - Staff gate scanning & lookup endpoint with strict site authorization
 router.get('/scan/:token', async (req: Request, res: Response): Promise<void> => {
   try {
     const rawToken = String(req.params.token);
     const token = cleanVerifyToken(rawToken);
     const orgId = req.user!.organizationId;
+    const isSuperAdmin = req.user!.role === 'SUPER_ADMIN';
+    const allowedSites = req.user!.allowedSiteIds || [];
 
     if (!token) {
       res.status(400).json({
@@ -158,7 +194,7 @@ router.get('/scan/:token', async (req: Request, res: Response): Promise<void> =>
         e.first_name as host_first_name, e.last_name as host_last_name,
         d.name as department_name,
         s.id as site_id, s.name as site_name, s.code as site_code,
-        o.name as organization_name
+        o.id as organization_id, o.name as organization_name
       FROM visitor_passes vp
       JOIN visits v ON vp.visit_id = v.id
       JOIN visitors vt ON v.visitor_id = vt.id
@@ -167,7 +203,7 @@ router.get('/scan/:token', async (req: Request, res: Response): Promise<void> =>
       LEFT JOIN sites s ON v.site_id = s.id
       LEFT JOIN organizations o ON v.organization_id = o.id
       WHERE v.organization_id = $1
-        AND (vp.qr_token_hash = $2 OR vp.qr_token = $3 OR vp.pass_number = $3 OR v.visit_code = $3)
+        AND (vp.qr_token_hash = $2 OR vp.pass_number = $3 OR v.visit_code = $3)
         AND v.deleted_at IS NULL
     `, [orgId, tokenHash, token]);
 
@@ -180,6 +216,16 @@ router.get('/scan/:token', async (req: Request, res: Response): Promise<void> =>
     }
 
     const pass = passRes.rows[0];
+
+    // Priority 2: Enforce that non-SUPER_ADMIN staff can only scan passes for their authorized site(s)
+    if (!isSuperAdmin && !allowedSites.includes(pass.site_id)) {
+      res.status(403).json({
+        success: false,
+        error: { code: 'UNAUTHORIZED_SITE_ACCESS', message: 'You are not authorized to scan or access passes for this site.' }
+      });
+      return;
+    }
+
     const isExpired = new Date(pass.valid_until) < new Date();
     const isUsed = pass.pass_status === 'USED' || pass.visit_status === 'CHECKED_OUT';
 
@@ -224,7 +270,7 @@ router.get('/scan/:token', async (req: Request, res: Response): Promise<void> =>
   }
 });
 
-// GET /api/passes/:visitId - Get pass info and generated QR image Data URL
+// GET /api/passes/:visitId - Get pass info and generated QR image Data URL (Never leaks raw qr_token)
 router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
   try {
     const visitId = String(req.params.visitId);
@@ -232,7 +278,7 @@ router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
 
     const passRes = await query(`
       SELECT 
-        vp.*,
+        vp.id, vp.visit_id, vp.pass_number, vp.pass_type, vp.status, vp.issued_at, vp.valid_until, vp.printed_count,
         v.site_id, v.visit_code, v.visitor_type, v.purpose, v.status as visit_status,
         v.expected_date, v.expected_time, v.check_in_time, v.accompanying_count,
         vt.full_name as visitor_name, vt.company_name, vt.photo_url as visitor_photo,
@@ -245,8 +291,8 @@ router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
       FROM visitor_passes vp
       JOIN visits v ON vp.visit_id = v.id
       JOIN visitors vt ON v.visitor_id = vt.id
-      JOIN employees e ON v.host_employee_id = e.id
-      JOIN departments d ON v.department_id = d.id
+      LEFT JOIN employees e ON v.host_employee_id = e.id
+      LEFT JOIN departments d ON v.department_id = d.id
       JOIN sites s ON v.site_id = s.id
       JOIN organizations o ON v.organization_id = o.id
       WHERE vp.visit_id = $1 AND v.organization_id = $2 AND v.deleted_at IS NULL
@@ -265,8 +311,8 @@ router.get('/:visitId', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Generate high-quality QR code data URL
-    const qrUrl = `${config.qr.verifyBaseUrl}/${passData.qr_token}`;
+    // QR verification target URL using human-readable pass_number (hash token is verified on public route)
+    const qrUrl = `${config.qr.verifyBaseUrl}/${passData.pass_number}`;
     const qrDataUrl = await QRCode.toDataURL(qrUrl, {
       errorCorrectionLevel: 'M',
       margin: 2,

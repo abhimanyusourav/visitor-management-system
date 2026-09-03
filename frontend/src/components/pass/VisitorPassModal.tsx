@@ -8,9 +8,10 @@ interface VisitorPassModalProps {
   visitId: string | null;
   isOpen: boolean;
   onClose: () => void;
+  initialQrToken?: string | null;
 }
 
-export const VisitorPassModal: React.FC<VisitorPassModalProps> = ({ visitId, isOpen, onClose }) => {
+export const VisitorPassModal: React.FC<VisitorPassModalProps> = ({ visitId, isOpen, onClose, initialQrToken }) => {
   const [passData, setPassData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [badgeFormat, setBadgeFormat] = useState<'A4' | 'STICKER'>('A4');
@@ -252,7 +253,7 @@ export const VisitorPassModal: React.FC<VisitorPassModalProps> = ({ visitId, isO
                 <div className="shrink-0 flex flex-col items-center">
                   <div className="p-1 bg-white border border-slate-300 rounded shadow-sm">
                     <QRCodeSVG
-                      value={passData.qrCodeUrl || `${window.location.origin}/v/${passData.qr_token}`}
+                      value={initialQrToken ? `${window.location.origin}/v/${initialQrToken}` : (passData.qrCodeUrl || `${window.location.origin}/v/${passData.pass_number}`)}
                       size={badgeFormat === 'STICKER' ? 65 : 75}
                       level="M"
                     />

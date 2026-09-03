@@ -1,3 +1,4 @@
+import './setup.js';
 import './auth.test.js';
 import './visits_workflow.test.js';
 import './rbac_isolation.test.js';
@@ -8,3 +9,4 @@ import './qr_security.test.js';
 import './storage_security.test.js';
 import './audit_hash_chain.test.js';
 import './gates.test.js';
+import './visitor_isolation.test.js';

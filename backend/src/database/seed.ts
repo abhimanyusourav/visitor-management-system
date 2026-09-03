@@ -8,6 +8,10 @@ export async function runSeed() {
   await initDatabase();
   await runMigrations();
 
+  if (process.env.NODE_ENV === 'test') {
+    await query(`DELETE FROM audit_logs`);
+  }
+
   const saltRounds = 10;
   const devPasswordHash = await bcrypt.hash('Password@123', saltRounds);
 
@@ -181,6 +185,19 @@ export async function runSeed() {
     VALUES ($1, $2)
     ON CONFLICT DO NOTHING
   `, [empId, siteBaghpatId]);
+
+  const emp2Id = '80000000-0000-0000-0000-000000000002';
+  await query(`
+    INSERT INTO employees (id, organization_id, user_id, department_id, employee_code, first_name, last_name, email, phone, designation, is_active)
+    VALUES ($1, $2, NULL, $3, 'EMP-HOST-002', 'Ramesh', 'Verma', 'ramesh@vms.local', '+91-9876543216', 'Plant Engineer', TRUE)
+    ON CONFLICT (organization_id, employee_code) DO NOTHING
+  `, [emp2Id, orgId, deptId]);
+
+  await query(`
+    INSERT INTO employee_sites (employee_id, site_id)
+    VALUES ($1, $2)
+    ON CONFLICT DO NOTHING
+  `, [emp2Id, siteBasiId]);
 
   console.log('✅ System initialized successfully with master configuration and persistent storage.');
 }

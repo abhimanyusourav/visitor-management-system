@@ -97,7 +97,7 @@ describe('VMS Visits & Gate Operations Workflow Tests', () => {
 
     assert.strictEqual(verifyRes.status, 200);
     assert.strictEqual(verifyRes.body.data.isValid, true);
-    assert.strictEqual(verifyRes.body.data.visitorName, 'Test Visitor');
+    assert.match(verifyRes.body.data.visitorName, /T\*+ V\*+/);
     assert.strictEqual(verifyRes.body.data.companyName, 'Test Engineering Corp');
 
     // 3. Confirm presence on Currently Inside list

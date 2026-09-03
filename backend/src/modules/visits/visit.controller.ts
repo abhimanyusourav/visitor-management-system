@@ -44,7 +44,7 @@ router.get('/currently-inside', requirePermission('inside:view'), async (req: Re
         e.email as host_email, e.phone as host_phone,
         d.id as department_id, d.name as department_name,
         s.name as site_name, s.code as site_code,
-        vp.id as pass_id, vp.pass_number, vp.qr_token, vp.status as pass_status,
+        vp.id as pass_id, vp.pass_number, vp.status as pass_status,
         vv.vehicle_type, vv.vehicle_number
       FROM visits v
       JOIN visitors vt ON v.visitor_id = vt.id
@@ -256,7 +256,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
         e.id as host_id, e.first_name as host_first_name, e.last_name as host_last_name,
         d.name as department_name,
         s.name as site_name, s.code as site_code,
-        vp.id as pass_id, vp.pass_number, vp.qr_token, vp.status as pass_status,
+        vp.id as pass_id, vp.pass_number, vp.status as pass_status,
         vv.vehicle_type, vv.vehicle_number
       FROM visits v
       JOIN visitors vt ON v.visitor_id = vt.id
@@ -305,19 +305,45 @@ router.post('/', requirePermission('visitor:create'), async (req: Request, res: 
       return;
     }
 
+    // Priority 17: Reject client tampering with organization or site IDs
+    if (req.body.site_id && req.body.site_id !== siteId) {
+      res.status(403).json({ success: false, error: { code: 'SITE_ID_MISMATCH', message: 'Supplied site_id does not match active site context.' } });
+      return;
+    }
+    if (req.body.organization_id && req.body.organization_id !== orgId) {
+      res.status(403).json({ success: false, error: { code: 'ORGANIZATION_ID_MISMATCH', message: 'Supplied organization_id does not match user organization.' } });
+      return;
+    }
+
     if (!host_employee_id || !purpose) {
       res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'Host employee and visit purpose are required.' } });
       return;
     }
 
-    // Verify host employee belongs to this organization
+    // Priority 7: Verify host employee belongs to this organization AND is mapped to this factory site
     const hostCheck = await query(`
-      SELECT id, department_id, user_id FROM employees WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
-    `, [host_employee_id, orgId]);
+      SELECT e.id, e.department_id, e.user_id 
+      FROM employees e
+      JOIN employee_sites es ON e.id = es.employee_id
+      WHERE e.id = $1 AND e.organization_id = $2 AND es.site_id = $3 AND e.deleted_at IS NULL
+    `, [host_employee_id, orgId, siteId]);
 
     if (hostCheck.rows.length === 0) {
-      res.status(400).json({ success: false, error: { code: 'INVALID_HOST', message: 'Selected host employee is not valid.' } });
+      res.status(400).json({ success: false, error: { code: 'INVALID_HOST_SITE', message: 'Selected host employee is not assigned to this factory site.' } });
       return;
+    }
+
+    // Priority 8: Verify gate belongs to this site and organization and is active
+    if (gate_id) {
+      const gateCheck = await query(`
+        SELECT id FROM gates 
+        WHERE id = $1 AND organization_id = $2 AND site_id = $3 AND is_active = TRUE AND deleted_at IS NULL
+      `, [gate_id, orgId, siteId]);
+
+      if (gateCheck.rows.length === 0) {
+        res.status(400).json({ success: false, error: { code: 'INVALID_GATE', message: 'Selected gate is invalid or inactive for this site.' } });
+        return;
+      }
     }
 
     // 1. Resolve or Create Visitor Profile
@@ -418,10 +444,11 @@ router.post('/', requirePermission('visitor:create'), async (req: Request, res: 
     const passNumber = `PASS-${visitCode.replace('VIS-', '')}`;
     const validUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
+    // Priority 4: Persist ONLY the SHA-256 hash. Never store plaintext QR secret in database.
     await query(`
       INSERT INTO visitor_passes (visit_id, pass_number, qr_token, qr_token_hash, pass_type, status, valid_until)
-      VALUES ($1, $2, $3, $4, 'STANDARD', 'ACTIVE', $5)
-    `, [newVisit.id, passNumber, qrToken, qrTokenHash, validUntil.toISOString()]);
+      VALUES ($1, $2, NULL, $3, 'STANDARD', 'ACTIVE', $4)
+    `, [newVisit.id, passNumber, qrTokenHash, validUntil.toISOString()]);
 
     // 6. Notify Host Employee if host has linked user account
     if (hostCheck.rows[0].user_id) {
@@ -447,12 +474,15 @@ router.post('/', requirePermission('visitor:create'), async (req: Request, res: 
       newValues: { visitCode, status: initialStatus, visitorId: finalVisitorId },
     });
 
+    // Priority 5: Return raw token transiently ONLY at generation time for badge printing
     res.status(201).json({
       success: true,
       message: auto_check_in ? 'Visitor checked in successfully.' : 'Visit registered successfully.',
       data: {
         ...newVisit,
+        passNumber,
         pass_number: passNumber,
+        qrToken,
         qr_token: qrToken,
       }
     });
@@ -477,7 +507,7 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
         e.email as host_email, e.phone as host_phone, e.designation as host_designation,
         d.name as department_name, d.code as department_code,
         s.name as site_name, s.code as site_code, s.address as site_address,
-        vp.id as pass_id, vp.pass_number, vp.qr_token, vp.status as pass_status, vp.printed_count,
+        vp.id as pass_id, vp.pass_number, vp.status as pass_status, vp.printed_count,
         vv.vehicle_type, vv.vehicle_number, vv.driver_name
       FROM visits v
       JOIN visitors vt ON v.visitor_id = vt.id
@@ -567,21 +597,35 @@ router.post('/:id/check-in', requirePermission('visit:checkin'), async (req: Req
       return;
     }
 
-    // Save photo if captured during gate check-in
+    // Priority 8: Verify gate belongs to this site and organization and is active
+    if (gate_id) {
+      const gateCheck = await query(`
+        SELECT id FROM gates 
+        WHERE id = $1 AND organization_id = $2 AND site_id = $3 AND is_active = TRUE AND deleted_at IS NULL
+      `, [gate_id, orgId, siteId]);
+
+      if (gateCheck.rows.length === 0) {
+        res.status(400).json({ success: false, error: { code: 'INVALID_GATE', message: 'Selected gate is invalid or inactive for this site.' } });
+        return;
+      }
+    }
+
+    // Priority 13: Save photo to visits.checkin_photo_url instead of overwriting visitor master photo
+    let checkinPhotoUrl: string | null = null;
     if (photo_base64 && typeof photo_base64 === 'string' && photo_base64.startsWith('data:image')) {
-      const photoUrl = await storageService.saveBase64Photo(photo_base64, 'gate_checkin');
-      await query(`UPDATE visitors SET photo_url = $1 WHERE id = $2`, [photoUrl, visit.visitor_id]);
+      checkinPhotoUrl = await storageService.saveBase64Photo(photo_base64, 'gate_checkin');
     }
 
     const checkInTime = new Date().toISOString();
 
-    // Atomic update with status check
+    // Atomic update with status check and decoupled visit-specific photo
     const updateRes = await query(`
       UPDATE visits 
-      SET status = 'CHECKED_IN', check_in_time = $1, checked_in_by_user_id = $2, entry_gate_id = $3, updated_at = NOW()
-      WHERE id = $4 AND organization_id = $5 AND site_id = $6 AND status IN ('REGISTERED', 'APPROVED', 'PRE_REGISTERED')
+      SET status = 'CHECKED_IN', check_in_time = $1, checked_in_by_user_id = $2, entry_gate_id = $3,
+          checkin_photo_url = COALESCE($4, checkin_photo_url), updated_at = NOW()
+      WHERE id = $5 AND organization_id = $6 AND site_id = $7 AND status IN ('REGISTERED', 'APPROVED', 'PRE_REGISTERED')
       RETURNING *
-    `, [checkInTime, req.user!.userId, gate_id || null, visitId, orgId, siteId]);
+    `, [checkInTime, req.user!.userId, gate_id || null, checkinPhotoUrl, visitId, orgId, siteId]);
 
     if (updateRes.rows.length === 0) {
       res.status(409).json({
@@ -638,6 +682,19 @@ router.post('/:id/check-out', requirePermission('visit:checkout'), async (req: R
     if (!siteId) {
       res.status(400).json({ success: false, error: { code: 'NO_ACTIVE_SITE', message: 'No active site selected.' } });
       return;
+    }
+
+    // Priority 8: Verify gate belongs to this site and organization and is active
+    if (gate_id) {
+      const gateCheck = await query(`
+        SELECT id FROM gates 
+        WHERE id = $1 AND organization_id = $2 AND site_id = $3 AND is_active = TRUE AND deleted_at IS NULL
+      `, [gate_id, orgId, siteId]);
+
+      if (gateCheck.rows.length === 0) {
+        res.status(400).json({ success: false, error: { code: 'INVALID_GATE', message: 'Selected gate is invalid or inactive for this site.' } });
+        return;
+      }
     }
 
     const checkRes = await query(`

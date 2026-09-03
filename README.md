@@ -8,14 +8,14 @@
 
 - 🏢 **Multi-Site Architecture**: Organization $\rightarrow$ Sites $\rightarrow$ Departments $\rightarrow$ Employees $\rightarrow$ Visitors $\rightarrow$ Visits hierarchy with strict cross-site data isolation.
 - 👤 **Visitor vs. Visit Separation**: Reusable visitor profiles with fast phone auto-fill lookup and historical visit logs.
-- 🛡️ **Zero-PII QR Code Verification**: High-entropy 48-char cryptographic QR tokens that prevent barcode duplication and leak zero sensitive PII.
+- 🛡️ **PII-Free QR Token with Controlled Verification**: High-entropy 48-char cryptographic QR tokens stored as SHA-256 hashes that prevent duplication and return minimal disclosure for public verification.
 - 🚨 **Live On-Site Rollcall & Emergency Evacuation Export**: Real-time roster of active visitors with a 1-click printable safety evacuation manifest for factory fire drills and plant emergencies.
 - 📷 **Webcam & Mobile Camera Capture**: WebRTC live photo capture with instant local storage and file upload fallback.
 - 🖨️ **Dual Badge Print Engine**: Standard A4 Sheet Passes with sign-off blocks and 4"x3" Thermal Sticky Badges with barcode and safety rules.
 - 👥 **Granular Role-Based Access Control (RBAC)**: 6 distinct roles (`SUPER_ADMIN`, `ADMIN`, `SITE_ADMIN`, `SECURITY`, `RECEPTION`, `EMPLOYEE`) with 18 permission keys.
 - 📱 **Progressive Web App (PWA)**: Installable as a standalone app on gate tablets and mobile phones with offline shell precaching.
 - 📊 **Executive Analytics & CSV Export**: Real-time visitor KPI metric cards, 7-day traffic charts, category breakdowns, and streaming CSV reports.
-- 📜 **Tamper-Proof Audit Logging**: Immutable security trail of all logins, check-ins, pass generations, and administrative changes.
+- 📜 **Tamper-Evident Audit Logging**: Cryptographically chained SHA-256 hash trail of logins, check-ins, pass generations, and administrative changes.
 
 ---
 
@@ -41,7 +41,8 @@ Visit **http://localhost:5173** in your web browser.
 
 ## 🔑 Demo User Credentials
 
-Password for all demo accounts: **`Password@123`**
+> [!WARNING]
+> **DEVELOPMENT/DEMO ONLY**: Seeded demo accounts use password **`Password@123`**. Never use or reuse default passwords in production. In production environments, strong random passwords and cryptographically secure JWT secrets (minimum 32 characters) must be configured in environment variables.
 
 | Role | Demo Email | Site Scope | Quick Actions |
 | :--- | :--- | :--- | :--- |
@@ -53,7 +54,7 @@ Password for all demo accounts: **`Password@123`**
 | **👤 Host Employee** | `employee@vms.local` | Baghpat Factory | Pre-Register Guests, Host Approvals Queue |
 
 > [!TIP]
-> The login screen contains **1-Click Demo Login Buttons** that pre-fill credentials for instantaneous role testing.
+> The login screen contains **1-Click Demo Login Buttons** that pre-fill credentials for instantaneous role testing in development.
 
 ---
 

@@ -241,7 +241,7 @@ CREATE TABLE IF NOT EXISTS visitor_passes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     visit_id UUID UNIQUE NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
     pass_number VARCHAR(50) UNIQUE NOT NULL,
-    qr_token VARCHAR(128) UNIQUE NOT NULL,
+    qr_token VARCHAR(128),
     qr_token_hash VARCHAR(64) UNIQUE,
     pass_type VARCHAR(50) NOT NULL DEFAULT 'STANDARD',
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE',
@@ -251,8 +251,8 @@ CREATE TABLE IF NOT EXISTS visitor_passes (
     printed_count INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_passes_token_status ON visitor_passes(qr_token, status);
 CREATE INDEX IF NOT EXISTS idx_passes_token_hash ON visitor_passes(qr_token_hash);
+
 
 -- 15. Visitor Documents
 CREATE TABLE IF NOT EXISTS visitor_documents (
@@ -323,11 +323,16 @@ ALTER TABLE visits ADD COLUMN IF NOT EXISTS entry_gate_id UUID REFERENCES gates(
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS exit_gate_id UUID REFERENCES gates(id) ON DELETE SET NULL;
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS emergency_muster_status VARCHAR(30) NOT NULL DEFAULT 'NOT_VERIFIED';
 ALTER TABLE visits ADD COLUMN IF NOT EXISTS assembly_point VARCHAR(100);
+ALTER TABLE visits ADD COLUMN IF NOT EXISTS checkin_photo_url VARCHAR(500);
 
+ALTER TABLE visitor_passes ALTER COLUMN qr_token DROP NOT NULL;
 ALTER TABLE visitor_passes ADD COLUMN IF NOT EXISTS qr_token_hash VARCHAR(64);
 CREATE INDEX IF NOT EXISTS idx_passes_token_hash ON visitor_passes(qr_token_hash);
+UPDATE visitor_passes SET qr_token_hash = encode(sha256(qr_token::bytea), 'hex') WHERE qr_token_hash IS NULL AND qr_token IS NOT NULL;
+UPDATE visitor_passes SET qr_token = NULL WHERE qr_token IS NOT NULL;
 
 ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64);
 ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_hash VARCHAR(64);
 CREATE INDEX IF NOT EXISTS idx_audit_event_hash ON audit_logs(event_hash);
+
 

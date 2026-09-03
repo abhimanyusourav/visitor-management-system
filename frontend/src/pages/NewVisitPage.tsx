@@ -60,6 +60,7 @@ export const NewVisitPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdVisitId, setCreatedVisitId] = useState<string | null>(null);
+  const [createdQrToken, setCreatedQrToken] = useState<string | null>(null);
 
   // Fetch host employees
   useEffect(() => {
@@ -155,6 +156,7 @@ export const NewVisitPage: React.FC = () => {
       const res = await api.post('/api/visits', payload);
       if (res.data.success) {
         setCreatedVisitId(res.data.data.id);
+        setCreatedQrToken(res.data.data.qrToken || res.data.data.qr_token || null);
       }
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Failed to register visit. Please verify form data.');
@@ -520,9 +522,11 @@ export const NewVisitPage: React.FC = () => {
       {/* Visitor Pass Modal (opens automatically after registration) */}
       <VisitorPassModal
         visitId={createdVisitId}
+        initialQrToken={createdQrToken}
         isOpen={Boolean(createdVisitId)}
         onClose={() => {
           setCreatedVisitId(null);
+          setCreatedQrToken(null);
           navigate('/visits/currently-inside');
         }}
       />
